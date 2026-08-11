@@ -57,7 +57,7 @@ export default function Control() {
       toggleCategorias();
     };
 
-  const urlControl = `${window.location.origin}/control/${vinculacionId}`;
+  //const urlControl = `${window.location.origin}/control/${vinculacionId}`;
 
   const toggleCategorias = (() =>{
         if(categoriaToggle){
