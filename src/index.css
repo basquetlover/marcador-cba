@@ -1,0 +1,108 @@
+@import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Hanken+Grotesk:ital,wght@0,100..900;1,100..900&display=swap');
+@import "tailwindcss";
+
+
+@theme {
+  /* Identidad C.B. Andratx */
+  --color-brand-blue-light: #54C5F8;
+  --color-brand-blue: #0b87ca;
+  --color-brand-blue-dark: #032a55;
+  --color-brand-blue-deep: #002450;
+  --color-brand-cyan: #00adef;
+  --color-brand-yellow: #ffc801;
+  --color-brand-yellow-bright: #fff100;
+  --color-brand-white: #e1e4e7;
+
+  /* Primary: amarillo del club */
+  --color-primary: #ffc801;
+  --color-on-primary: #032a55;
+  --color-primary-container: #fff100;
+  --color-on-primary-container: #032a55;
+  --color-primary-fixed: #fff4a3;
+  --color-primary-fixed-dim: #ffc801;
+  --color-on-primary-fixed: #221b00;
+  --color-on-primary-fixed-variant: #554600;
+  --color-inverse-primary: #ffe04d;
+
+  /* Secondary: azul marino */
+  --color-secondary: #032a55;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #0f5c97;
+  --color-on-secondary-container: #ffffff;
+  --color-secondary-fixed: #d3e9ff;
+  --color-secondary-fixed-dim: #9dccf7;
+  --color-on-secondary-fixed: #001c38;
+  --color-on-secondary-fixed-variant: #084b7c;
+
+  /* Tertiary: azul celeste */
+  --color-tertiary: #007eb8;
+  --color-on-tertiary: #ffffff;
+  --color-tertiary-container: #bde5ff;
+  --color-on-tertiary-container: #00344f;
+  --color-tertiary-fixed: #d8efff;
+  --color-tertiary-fixed-dim: #91d2ff;
+  --color-on-tertiary-fixed: #001e30;
+  --color-on-tertiary-fixed-variant: #005276;
+
+  /* Fondo general */
+  --color-background: #eef8ff;
+  --color-on-background: #032a55;
+
+  /* Superficies */
+  --color-surface: #f8fcff;
+  --color-on-surface: #032a55;
+  --color-surface-variant: #dceaf3;
+  --color-on-surface-variant: #344b5e;
+  --color-surface-dim: #d5e5ef;
+  --color-surface-bright: #ffffff;
+
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f1f8fc;
+  --color-surface-container: #e8f3f9;
+  --color-surface-container-high: #deedf5;
+  --color-surface-container-highest: #d3e4ee;
+
+  /* Bordes */
+  --color-outline: #627d91;
+  --color-outline-variant: #b9cbd7;
+
+  /* Colores inversos */
+  --color-inverse-surface: #032a55;
+  --color-inverse-on-surface: #eef8ff;
+
+  /* Color aplicado a elementos interactivos */
+  --color-surface-tint: #0f5c97;
+
+  /* Estados */
+  --color-success: #16834b;
+  --color-on-success: #ffffff;
+  --color-success-container: #b9f6ce;
+  --color-on-success-container: #064b2a;
+
+  --color-warning: #e9a400;
+  --color-on-warning: #032a55;
+  --color-warning-container: #ffecad;
+  --color-on-warning-container: #503600;
+
+  --color-error: #ba1a1a;
+  --color-on-error: #ffffff;
+  --color-error-container: #ffdad6;
+  --color-on-error-container: #93000a;
+
+  /* Estados del sistema */
+  --color-connected: #22c55e;
+  --color-disconnected: #dc2626;
+  --color-pending: #ffc801;
+  --color-live: #ef4444;
+}
+
+* {
+  font-family: "Hanken Grotesk", sans-serif;
+  font-optical-sizing: auto;
+}
+
+.bebas-neue {
+  font-family: "Bebas Neue", sans-serif;
+  font-weight: 500;
+  font-style: normal;
+}
