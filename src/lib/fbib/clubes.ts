@@ -1,10 +1,13 @@
+import { FBIB_CONFIG } from "./config";
 import { peticionFBIB } from "./cliente";
 
 import type {
-    ClubCompletoFBIB,
-    ClubFBIB,
-    InformacionClubFBIB,
+  ClubCompletoFBIB,
+  ClubFBIB,
+  EquipoClubFBIB,
+  InformacionClubFBIB,
 } from "./types";
+
 
 export function obtenerClubesFBIB(): Promise<ClubFBIB[]> {
     return peticionFBIB<ClubFBIB[]>(
@@ -44,4 +47,21 @@ export async function obtenerClubCompletoFBIB(
         ...club,
         escudo,
     };
+}
+
+export async function obtenerEquiposClubFBIB(
+  clubId: number | string = FBIB_CONFIG.clubId
+): Promise<EquipoClubFBIB[]> {
+  const club = await obtenerClubFBIB(clubId);
+
+  if (!club.categories) {
+    return [];
+  }
+
+  return Object.values(club.categories).flatMap((categoria) =>
+    Object.values(categoria.teams).map((equipo) => ({
+      ...equipo,
+      categoria: categoria.name,
+    }))
+  );
 }

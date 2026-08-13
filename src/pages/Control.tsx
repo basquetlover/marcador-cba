@@ -6,6 +6,8 @@ import { cargarDisenoSeleccionado, guardarDisenoSeleccionado } from "../lib/dise
 import { obtenerOCrearIdVinculacion } from "../lib/vinculacionCookie";
 import QrVinculacion from "../components/QrVinculacion";
 import { obtenerCategoriaPorId } from "../lib/obtenerCategoriaPorId ";
+import { obtenerCalendarioConfiguradoFBIB } from "../lib/fbib";
+import { obtenerEquiposClubFBIB } from "../lib/fbib/clubes";
 //import { obtenerClubesFBIB } from "../lib/fbib";
 
 
@@ -22,14 +24,22 @@ export default function Control() {
 
     // const [confDiseno, setConfDiseno] = useState<any | null>(null)
 
-    // useEffect(() => {
-    //   const fetchClubes = async () => {
-    //     const clubes = await obtenerClubesFBIB();
-    //     console.log("Clubes obtenidos:", clubes);
-    //   };
+    const mes = 9;
+    useEffect(() => {
+      const fetchClubes = async () => {
+        const partidos = await obtenerCalendarioConfiguradoFBIB(mes);
 
-    //   fetchClubes();
-    // }, []);
+        console.log(partidos);
+      };
+
+      fetchClubes();
+    }, []);
+
+    useEffect(() => {
+      obtenerEquiposClubFBIB()
+        .then((equipos) => console.log(equipos))
+        .catch((error) => console.error(error));
+    }, []);
     
 
     // Variable Layout Seleccionado
