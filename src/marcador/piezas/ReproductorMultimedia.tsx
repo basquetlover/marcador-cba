@@ -32,7 +32,6 @@ export default function ReproductorMultimedia({
     tipo = "auto",
     bucle = true,
     ajuste = "contener",
-    estilo = {},
 }: ReproductorMultimediaProps) {
 
     // 3. ESTADO DE ERRORES
@@ -42,10 +41,6 @@ export default function ReproductorMultimedia({
 
 
     // 4. CONFIGURACIÓN VISUAL
-
-    const fondo = estilo.fondo ?? "#032a55";
-
-    const color = estilo.color ?? "#FFC801";
 
     const ajusteVisual =
         ajuste === "cubrir"
@@ -63,7 +58,7 @@ export default function ReproductorMultimedia({
         tipo === "auto"
             ? (
                 /\.(mp4|webm|ogv|ogg)(?:[?#].*)?$/i.test(archivo) ||
-                archivo.startsWith("data:video/")
+                    archivo.startsWith("data:video/")
                     ? "video"
                     : "imagen"
             )
@@ -80,7 +75,6 @@ export default function ReproductorMultimedia({
         <div
             className="relative border-2 border-primary rounded-lg bg-[#033266]/70 h-full w-full overflow-hidden"
             style={{
-                // backgroundColor: fondo,
                 boxSizing: "border-box",
             }}
         >
@@ -152,14 +146,21 @@ export default function ReproductorMultimedia({
                 <div
                     className="absolute inset-0 flex flex-col items-center justify-center overflow-hidden"
                 >
-                    
-                    <img src="/favicon.svg" alt="Marcador CBA" className="h-30 w-30 mb-2" />
+
+                    <img
+                        src="/favicon.svg"
+                        alt="Marcador CBA"
+                        className="h-30 w-30 mb-2"
+                    />
+
                     <p className="text-center text text-primary font-semibold uppercase tracking-widest mt-5">
                         #Fent basquet desde 1985
                     </p>
+
                     <p className="text-center text text-primary font-semibold uppercase tracking-widest mt-2">
                         #Sentiment Blau Groc
                     </p>
+
                 </div>
 
             )}
