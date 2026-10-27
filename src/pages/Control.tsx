@@ -1,5 +1,5 @@
 
-import { useContext, useEffect, useRef, useState } from "react";
+import { useContext, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { DisenoMarcador } from "../marcador/tipos";
 import type { ModoReloj } from "../marcador/MarcadorProvider";
@@ -12,8 +12,8 @@ import {
     guardarDisenoSeleccionado,
 } from "../lib/disenoStorage";
 import { obtenerOCrearIdVinculacion } from "../lib/vinculacionCookie";
-import { obtenerCalendarioConfiguradoFBIB } from "../lib/fbib";
-import { obtenerEquiposClubFBIB } from "../lib/fbib/clubes";
+// import { obtenerCalendarioConfiguradoFBIB } from "../lib/fbib";
+// import { obtenerEquiposClubFBIB } from "../lib/fbib/clubes";
 import QrVinculacion from "../components/QrVinculacion";
 import VisorMarcador from "../marcador/VisorMarcador";
 import {
@@ -156,9 +156,9 @@ export default function Control() {
         obtenerOCrearIdVinculacion,
     );
 
-    const [estadoFBIB, setEstadoFBIB] = useState<
-        "consultando" | "disponible" | "error"
-    >("consultando");
+    // const [estadoFBIB, setEstadoFBIB] = useState<
+    //     "consultando" | "disponible" | "error"
+    // >("consultando");
 
     const piezaMultimedia = disenoActivo.capas.find(
         (pieza) => pieza.tipo === "multimedia",
@@ -1292,7 +1292,7 @@ export default function Control() {
                             </div>
                         )}
 
-                        <div className="mt-4 rounded-xl bg-brand-blue-deep p-3">
+                        {/* <div className="mt-4 rounded-xl bg-brand-blue-deep p-3">
                             <p className="text-sm font-semibold">
                                 Consultas FBIB
                             </p>
@@ -1304,7 +1304,7 @@ export default function Control() {
                                         ? "Consulta correcta"
                                         : "No disponible"}
                             </p>
-                        </div>
+                        </div> */}
 
                         <p className="mt-3 text-xs text-white/50">
                             La sincronización entre dispositivos todavía
