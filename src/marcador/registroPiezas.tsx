@@ -14,6 +14,7 @@ import EscudoEquipo from "./piezas/EscudoEquipo";
 import Periodo from "./piezas/Periodo";
 import Faltas from "./piezas/Faltas";
 import TiemposMuertos from "./piezas/TiemposMuertos";
+import ReproductorMultimedia from "./piezas/ReproductorMultimedia";
 
 
 /* ============================================
@@ -35,6 +36,7 @@ export const PIEZAS_DISPONIBLES: {
     { tipo: "periodo", nombre: "Periodo" },
     { tipo: "faltas", nombre: "Faltas de equipo" },
     { tipo: "tiempos-muertos", nombre: "Tiempos muertos" },
+    { tipo: "multimedia", nombre: "Reproductor multimedia" },
 ];
 
 
@@ -53,7 +55,7 @@ export default function RegistroPiezas({
     datos,
 }: RegistroPiezasProps) {
 
-    // 4. IDENTIFICAR DATOS VINCULADOS
+    // 4. DATOS VINCULADOS
 
     const partidoId =
         pieza.vinculacion.partidoId ??
@@ -75,7 +77,7 @@ export default function RegistroPiezas({
         : null;
 
 
-    // 5. CONFIGURACIÓN DE LA CATEGORÍA
+    // 5. CONFIGURACIÓN DE CATEGORÍA
 
     const categoria = CATEGORIAS.find(
         (cat) => cat.id === partido?.categoriaId,
@@ -85,7 +87,7 @@ export default function RegistroPiezas({
         categoria?.reglamento.periodos.cantidad ?? null;
 
 
-    // 6. PROPIEDADES DE LA PIEZA
+    // 6. PROPIEDADES GENERALES
 
     const propiedades = pieza.propiedades ?? {};
 
@@ -118,12 +120,38 @@ export default function RegistroPiezas({
             : "contener";
 
 
-    // 7. ÚNICO RETURN
+    // 7. PROPIEDADES MULTIMEDIA
+
+    const multimediaSrc =
+        typeof propiedades.src === "string"
+            ? propiedades.src
+            : null;
+
+    const multimediaTipo =
+        propiedades.tipoArchivo === "imagen"
+            ? "imagen"
+            : propiedades.tipoArchivo === "video"
+                ? "video"
+                : "auto";
+
+    const multimediaBucle =
+        propiedades.bucle !== false;
+
+    const multimediaAjuste =
+        propiedades.ajuste === "cubrir"
+            ? "cubrir"
+            : propiedades.ajuste === "estirar"
+                ? "estirar"
+                : "contener";
+
+
+    // 8. ÚNICO RETURN
 
     return (
         <>
 
             {/* TIEMPO */}
+
             {pieza.tipo === "tiempo" && (
                 <Tiempo
                     texto={reloj?.texto ?? "--:--"}
@@ -133,6 +161,7 @@ export default function RegistroPiezas({
 
 
             {/* PUNTOS */}
+
             {pieza.tipo === "puntos" && equipo && (
                 <Puntos
                     puntos={equipo.puntos}
@@ -142,6 +171,7 @@ export default function RegistroPiezas({
 
 
             {/* NOMBRE DEL EQUIPO */}
+
             {pieza.tipo === "nombre-equipo" && equipo && (
                 <NombreEquipo
                     nombre={equipo.nombre}
@@ -151,6 +181,7 @@ export default function RegistroPiezas({
 
 
             {/* ESCUDO DEL EQUIPO */}
+
             {pieza.tipo === "escudo-equipo" && equipo && (
                 <EscudoEquipo
                     escudo={equipo.escudo}
@@ -162,6 +193,7 @@ export default function RegistroPiezas({
 
 
             {/* PERIODO */}
+
             {pieza.tipo === "periodo" && partido && (
                 <Periodo
                     periodo={partido.periodo}
@@ -173,6 +205,7 @@ export default function RegistroPiezas({
 
 
             {/* FALTAS DEL EQUIPO */}
+
             {pieza.tipo === "faltas" && equipo && (
                 <Faltas
                     faltas={equipo.faltas}
@@ -188,6 +221,7 @@ export default function RegistroPiezas({
 
 
             {/* TIEMPOS MUERTOS */}
+
             {pieza.tipo === "tiempos-muertos" && equipo && (
                 <TiemposMuertos
                     tiemposMuertos={equipo.tiemposMuertos}
@@ -197,6 +231,19 @@ export default function RegistroPiezas({
                         cantidadIndicadores ?? 3
                     }
                     representacion={representacionTiempos}
+                />
+            )}
+
+
+            {/* REPRODUCTOR MULTIMEDIA */}
+
+            {pieza.tipo === "multimedia" && (
+                <ReproductorMultimedia
+                    src={multimediaSrc}
+                    tipo={multimediaTipo}
+                    bucle={multimediaBucle}
+                    ajuste={multimediaAjuste}
+                    estilo={pieza.estilo}
                 />
             )}
 

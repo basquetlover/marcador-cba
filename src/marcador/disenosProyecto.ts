@@ -60,6 +60,41 @@ export const DISENO_PROYECTO_SIMPLE: DisenoMarcador = {
             },
         },
 
+         // ====================================
+        // REPRODUCTOR MULTIMEDIA
+        // VideoReady del XML original
+        // ====================================
+
+        {
+            id: "simple-reproductor-multimedia",
+            tipo: "multimedia",
+            nombre: "Reproductor multimedia",
+
+            x: 187,
+            y: 54,
+            ancho: 460,
+            alto: 268,
+
+            zIndex: 25,
+            visible: true,
+            bloqueado: false,
+
+            vinculacion: {},
+
+            estilo: {
+                fondo: "#032a55",
+                color: "#FFC801",
+                alineacion: "centro",
+            },
+
+            propiedades: {
+                src: "",
+                tipoArchivo: "auto",
+                bucle: true,
+                ajuste: "contener",
+            },
+        },
+
         // Escudo local
         {
             id: "simple-escudo-local",
