@@ -1,355 +1,1002 @@
+
+import { useContext, useEffect, useState } from "react";
+
 import usePageTitle from "../lib/usePageTitle";
+
 import { DISENOS } from "../const/disenos";
 import { CATEGORIAS } from "../const/categorias";
-import { useEffect, useState } from "react";
-import { cargarDisenoSeleccionado, guardarDisenoSeleccionado } from "../lib/disenoStorage";
-import { obtenerOCrearIdVinculacion } from "../lib/vinculacionCookie";
-import QrVinculacion from "../components/QrVinculacion";
-import { obtenerCategoriaPorId } from "../lib/obtenerCategoriaPorId ";
-import { obtenerCalendarioConfiguradoFBIB } from "../lib/fbib";
-import { obtenerEquiposClubFBIB } from "../lib/fbib/clubes";
-//import { obtenerClubesFBIB } from "../lib/fbib";
 
+import {
+    cargarDisenoSeleccionado,
+    guardarDisenoSeleccionado,
+} from "../lib/disenoStorage";
+
+import {
+    obtenerOCrearIdVinculacion,
+} from "../lib/vinculacionCookie";
+
+import {
+    obtenerCalendarioConfiguradoFBIB,
+} from "../lib/fbib";
+
+import {
+    obtenerEquiposClubFBIB,
+} from "../lib/fbib/clubes";
+
+import QrVinculacion from "../components/QrVinculacion";
+
+import VisorMarcador from "../marcador/VisorMarcador";
+
+import {
+    DISENO_PROYECTO_SIMPLE,
+    DISENOS_PROYECTO_POR_ID,
+} from "../marcador/disenosProyecto";
+
+import {
+    MarcadorContext,
+} from "../marcador/MarcadorProvider";
+
+import {
+    ID_RELOJ_PRINCIPAL,
+} from "../marcador/datosIniciales";
+
+
+/* ============================================
+   MARCADOR CBA
+   Página principal de control
+   ============================================ */
+
+
+// 1. COMPONENTE PRINCIPAL
 
 export default function Control() {
+
     usePageTitle("Control Marcador");
 
-    const [qrAbierto, setQrAbierto] = useState(false);
-    const [categoriaToggle, setCategoriaToggle] = useState(false);
 
-    const [categoriaSeleccionada, setCategoriaSeleccionada] = useState<string | null>(null);
-    const [categoriaSeleccionadaNombre, setCategoriaSeleccionadaNombre] = useState<string | null>(null);
+    // 2. CONTEXTO DEL MARCADOR
 
-    const [categoriaSeleccionadaConf, setCategoriaSeleccionadaConf] = useState<any | null>(null);
+    const marcador = useContext(MarcadorContext);
 
-    // const [confDiseno, setConfDiseno] = useState<any | null>(null)
+    if (!marcador) {
+        throw new Error(
+            "Control debe utilizarse dentro de MarcadorProvider.",
+        );
+    }
 
-    const mes = 9;
-    useEffect(() => {
-      const fetchClubes = async () => {
-        const partidos = await obtenerCalendarioConfiguradoFBIB(mes);
+    const {
+        datos,
+        actualizarEquipo,
+        actualizarPeriodo,
+        actualizarCategoria,
+        actualizarReloj,
+    } = marcador;
 
-        console.log(partidos);
-      };
+    const partido = datos.partidos[datos.partidoPrincipalId];
 
-      fetchClubes();
-    }, []);
+    const reloj = datos.relojes[ID_RELOJ_PRINCIPAL];
 
-    useEffect(() => {
-      obtenerEquiposClubFBIB()
-        .then((equipos) => console.log(equipos))
-        .catch((error) => console.error(error));
-    }, []);
-    
 
-    // Variable Layout Seleccionado
-    const [selectedDiseno, setSelectedDiseno] = useState<string | null>(() => {
-      const disenoGuardado = cargarDisenoSeleccionado();
+    // 3. SELECCIÓN DE DISEÑO
 
-      const existe = DISENOS.some(
-        (diseno) => diseno.id === disenoGuardado,
-      );
+    const [selectedDiseno, setSelectedDiseno] = useState<string>(
+        () => {
 
-      return existe ? disenoGuardado : null;
-    });
+            const guardado = cargarDisenoSeleccionado();
 
-    // Variable con id de vinculacion para el marcador y el mando
-    const [vinculacionId] = useState(
-      obtenerOCrearIdVinculacion,
+            if (
+                guardado &&
+                DISENOS_PROYECTO_POR_ID[guardado]
+            ) {
+                return guardado;
+            }
+
+            return DISENO_PROYECTO_SIMPLE.id;
+
+        },
     );
 
-    const actualizarCategoria = (categoriaId: string) => {
-      const categoria = CATEGORIAS.find((cat) => cat.id === categoriaId);
-      if (categoria) {
-        setCategoriaSeleccionada(categoria.id);
-        setCategoriaSeleccionadaNombre(categoria.nombre);
-      }
-      toggleCategorias();
-    };
-
-  //const urlControl = `${window.location.origin}/control/${vinculacionId}`;
-
-  const toggleCategorias = (() =>{
-        if(categoriaToggle){
-            setCategoriaToggle(false)
-        } else (
-            setCategoriaToggle(true)
-        )
-    })
-
-  // Funcion para seleccionar un diseño y guardarlo en el almacenamiento local
-  function seleccionarDiseno(disenoId: string) {
-    setSelectedDiseno(disenoId);
-    guardarDisenoSeleccionado(disenoId);
-  }
-
-  // Función para convertir segundos a minutos
-  function segundosAMinutos(segundos: number): number {
-    return segundos / 60;
-  }
-
-  // Cargar Configuracion segun categoria seleccionada
-  useEffect(() => {
-    if(!categoriaSeleccionada) return;
-    const categoriaSeleccionadaConf = obtenerCategoriaPorId(categoriaSeleccionada);
-    //console.log("Configuración de la categoría seleccionada:", categoriaSeleccionadaConf);
-
-    setCategoriaSeleccionadaConf(categoriaSeleccionadaConf);
-  }, [categoriaSeleccionada]);
-
-  return (
-    <>
-    <main className="flex min-h-screen w-full  flex-col items-center justify-between p-24">
-        <section className="grid grid-cols-[3fr_2fr] grid-rows-2 gap-10 max-w-7xl w-full mx-auto h-auto">
-
-            {/* Seleccion Marcador Layout */}
-            <div className="w-full h-auto p-4 rounded-lg bg-brand-blue-light shadow-[0px_0px_20px_0px_#002450]">
-              <div className="flex gap-x-1 items-center">
-                <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 fill-primary" viewBox="0 -960 960 960">
-                  <path d="M520-600v-240h320v240zM120-440v-400h320v400zm400 320v-400h320v400zm-400 0v-240h320v240zm80-400h160v-240H200zm400 320h160v-240H600zm0-480h160v-80H600zM200-200h160v-80H200zm160-80"/>
-                </svg>
-                <h2 className="text-3xl uppercase font-bold text-primary">Diseño de proyección</h2>
-              </div>
-
-              <div className="w-full flex flex-wrap gap-5 mt-5 items-center">
-                {DISENOS.map((diseno) => (
-                  <div key={diseno.id} className="w-86 h-auto">
-                    <div className={`w-full p-2 border rounded-lg relative group cursor-pointer ${selectedDiseno === diseno.id ? 'border-primary border-2' : 'border-white'}`} onClick={() => seleccionarDiseno(diseno.id)}>
-                      <img src={`/miniaturas/${diseno.miniatura}.png`} alt={diseno.nombre} className="w-full h-auto rounded-lg" />
-                      <div className={`w-full h-full absolute top-0 left-0 bg-brand-blue-dark/20 rounded-lg group-hover:opacity-0 duration-300 ${selectedDiseno === diseno.id ? 'opacity-0' : 'opacity-100'}`}></div>
-                    </div>
-
-                    <div className="w-full flex flex-row items-center place-content-between mt-2">
-                      <p className={`text-xl font-semibold ${selectedDiseno === diseno.id ? 'text-primary' : 'text-white/70'}`}>{diseno.nombre}</p>
-                      <span className={`px-2 text-sm font-semibold py-px rounded bg-primary text-brand-blue-deep uppercase ${selectedDiseno === diseno.id ? 'block': 'hidden'}`}>
-                        Activo
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-              
-            </div>
-
-            {/* Sincronizar y Configuracion Básica */}
-            <div className="row-span-2 w-full flex flex-col gap-y-10">
-              {/* Sincronización */}
-              <div className="w-full h-auto p-4 rounded-lg bg-brand-blue-light shadow-[0px_0px_20px_0px_#002450] relative overflow-hidden">
-                <span className="absolute -top-8 -right-8">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-30 h-30 fill-brand-blue/15" viewBox="0 -960 960 960">
-                    <path d="M80-680v-200h200v80H160v120zm0 600v-200h80v120h120v80zm600 0v-80h120v-120h80v200zm120-600v-120H680v-80h200v200zM700-260h60v60h-60zm0-120h60v60h-60zm-60 60h60v60h-60zm-60 60h60v60h-60zm-60-60h60v60h-60zm120-120h60v60h-60zm-60 60h60v60h-60zm-60-60h60v60h-60zm240-320v240H520v-240zM440-440v240H200v-240zm0-320v240H200v-240zm-60 500v-120H260v120zm0-320v-120H260v120zm320 0v-120H580v120z"/>
-                  </svg>
-                </span>
-
-                <div className="flex gap-x-1 items-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 fill-primary" viewBox="0 -960 960 960">
-                    <path d="M720-320H575q-7-21-15.5-41.5T542-400h98v-160H413q-29-25-62.5-45T281-640h439zM80-160v-120q50 0 85 35t35 85zm200 0q0-83-58.5-141.5T80-360v-80q117 0 198.5 81.5T360-160zm160 0q0-75-28.5-140.5t-77-114-114-77T80-520v-80q91 0 171 34.5T391-471t94.5 140T520-160zm360 0H600q0-20-1.5-40t-4.5-40h206v-480H160v46q-20-3-40-4.5T80-680v-40q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160"/>
-                  </svg>
-                  <h2 className="text-3xl uppercase font-bold text-primary">Sincronización</h2>
-                </div>
-                <p className="text-white/70">Vincula un dispositivo móvil o tablet para usarlo como mando del marcador.</p>
-
-                <div className="w-full bg-brand-blue-dark/50 rounded-lg mt-3 p-4 grid grid-cols-[1fr_auto] gap-x-2 items-center">
-                  <div className="space-y-2">
-                    <p className="text-white/70 uppercase text-sm font-semibold">Código de partido</p>
-                    <span className="text-white text-5xl font-bold bebas-neue">{vinculacionId}</span>
-                  </div>
-
-                  <div onClick={() => setQrAbierto(true)} aria-label="Abrir QR" className="cursor-pointer relative group flex items-center place-content-center z-0">
-                    <img src="/img/QRhover.svg" className="absolute top-0 left-0 w-full h-full object-contain group-hover:scale-110 duration-300 z-0" alt="QR" />
-                    <span className="relative z-10">
-                      <QrVinculacion partidoId={vinculacionId} size={80} />
-                    </span>
-                    
-                    
-                  </div>
-                </div>
-              </div>
-
-              {/* Configuración Básica */}
-              <div className="w-full h-auto p-4 rounded-lg bg-brand-blue-light shadow-[0px_0px_20px_0px_#002450] relative ">
-                <div className="flex gap-x-1 items-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 fill-primary" viewBox="0 -960 960 960">
-                    <path d="M160-120v-80h480v80zm226-194L160-540l84-86 228 226zm254-254L414-796l86-84 226 226zm184 408L302-682l56-56 522 522z"/>
-                  </svg>
-                  <h2 className="text-3xl uppercase font-bold text-primary">Reglas y tiempos</h2>
-                </div>
-
-                {/* Seleccionar Categoria */}
-                <div className="w-full mt-5 grid grid-cols-[1fr_auto] gap-5 items-center">
-                  <p className="text-white text-lg">Categoría</p>
-
-                  <div className="relative">
-                      <div onClick={() => toggleCategorias()} className={`w-60 rounded-lg border relative  border-border bg-brand-blue-dark/50 px-3 py-2 outline-none cursor-pointer transition focus:border-primary`}>
-                          {/* Aquí irá el nombre del curso seleccionado */}
-                          {
-                              categoriaSeleccionadaNombre ? (
-                                  <p>{categoriaSeleccionadaNombre}</p>
-                              ):(
-                                  <p>Selecciona una categoría</p>
-                              )
-                          }
-                          <svg xmlns="http://www.w3.org/2000/svg" className="absolute right-3 top-1/2 h-6 w-6 -translate-y-1/2 fill-neutral cursor-pointer" viewBox="0 -960 960 960">
-                            <path d="M480-344 240-584l56-56 184 184 184-184 56 56z"/>
-                        </svg>
-                      </div>
-
-                      
-
-                      <div className={`absolute w-full max-h-50 bg-secondary-container z-10 rounded-2xl overflow-y-scroll scroll-personalizada ${!categoriaToggle && "hidden"}`}>
-                          <div className='flex flex-col gap-y-1 p-2'>
-                          {CATEGORIAS.map((categoria) => (
-                                  <div onClick={() => actualizarCategoria(categoria.id)} className="cursor-pointer px-3 py-2 hover:bg-primary rounded-lg" key={categoria.id} >
-                                      <p className='w-full flex items-center place-content-between'>
-                                          {categoria.nombre}
-                                      </p>
-                                  </div>
-                              ))}
-                          </div>
-                      </div>
-                  </div>
-                </div>
-
-                {/* Divisor */}
-                <div className="w-full mx-auto h-0.5 rounded my-5 bg-white/30">&nbsp;</div>
-                
-                <div className="relative">
-
-                  {
-                    categoriaSeleccionada ? (
-                      <>
-                      {/* Periodos y duracion */}
-                      <div className="w-full grid grid-cols-[1fr_1fr] gap-5">
-                          <div className="w-full flex flex-col gap-2 ">
-                              <p className="text-white text-lg">Periodos</p>
-                              <p className="w-full bg-brand-blue-dark/50 px-3 py-2 rounded-lg text-white">{categoriaSeleccionadaConf?.reglamento.periodos.cantidad}</p>
-                          </div>
-
-                          <div className="w-full flex flex-col gap-2 ">
-                              <p className="text-white text-lg">Duración</p>
-                              <p className="w-full bg-brand-blue-dark/50 px-3 py-2 rounded-lg text-white">{segundosAMinutos( categoriaSeleccionadaConf?.reglamento.periodos.duracion)} min</p>
-                          </div>
-                      </div>
-
-                      {/* Divisor */}
-                      <div className="w-full mx-auto h-0.5 rounded my-5 bg-white/30">&nbsp;</div>
-
-                      {/* Periodos y duracion */}
-                      <div className="w-full grid grid-cols-[1fr_1fr] gap-5">
-                          <div className="w-full flex flex-col gap-2 ">
-                              <p className="text-white text-lg">Proroga</p>
-                              <p className="w-full bg-brand-blue-dark/50 px-3 py-2 rounded-lg text-white">{categoriaSeleccionadaConf?.reglamento.prorroga.permitida === true ?  'Habilitada' : 'Deshabilitada' }</p>
-                          </div>
-
-                          <div className="w-full flex flex-col gap-2 ">
-                              <p className="text-white text-lg">Duración</p>
-                              <p className="w-full bg-brand-blue-dark/50 px-3 py-2 rounded-lg text-white">{segundosAMinutos( categoriaSeleccionadaConf?.reglamento.prorroga.duracion)} min</p>
-                          </div>
-                      </div>
-                      </>
-                    ):(
-                      <div className=" w-full h-50 flex flex-col gap-5 items-center place-content-center">
-
-                              <p className="text-2xl text-primary uppercase font-semibold">Seleccione una categoria</p>
-                      </div>
-                    )
-                  }
-                </div>
-                
+    const disenoActivo =
+        DISENOS_PROYECTO_POR_ID[selectedDiseno] ??
+        DISENO_PROYECTO_SIMPLE;
 
 
-              </div>
-            </div>
+    // 4. VINCULACIÓN QR
 
-            {/* Configuración Avanzada */}
-            <div className="w-full h-auto p-4 rounded-lg bg-brand-blue-light shadow-[0px_0px_20px_0px_#002450]">
-                <div className="flex gap-x-1 items-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 fill-primary" viewBox="0 -960 960 960">
-                    <path d="M162-520h114q-6-38-23-71t-43-59q-18 29-30.5 61.5T162-520m522 0h114q-5-36-17.5-68.5T750-650q-26 26-43 59t-23 71M210-310q26-26 43-59t23-71H162q5 36 17.5 68.5T210-310m540 0q18-29 30.5-61.5T798-440H684q6 38 23 71t43 59M358-520h82v-278q-53 8-98.5 29.5T260-712q39 38 64.5 86.5T358-520m162 0h82q8-57 33.5-105.5T700-712q-36-35-81.5-56.5T520-798zm-80 358v-278h-82q-8 57-33.5 105.5T260-248q36 35 81.5 56.5T440-162m80 0q53-8 98.5-29.5T700-248q-39-38-64.5-86.5T602-440h-82zm-40 82q-83 0-156-31.5T197-197t-85.5-127T80-480t31.5-156T197-763t127-85.5T480-880t156 31.5T763-763t85.5 127T880-480t-31.5 156T763-197t-127 85.5T480-80"/>
-                  </svg>
-                  <h2 className="text-3xl uppercase font-bold text-primary">Datos del partido</h2>
-                </div>
+    const [vinculacionId] = useState(
+        obtenerOCrearIdVinculacion,
+    );
 
-                <div className="w-full mt-5 flex flex-wrap gap-5">
-                  <div className="w-86 flex flex-col gap-y-2 items-center">
-                    <h3 className="text-2xl font-bold text-white uppercase text-center">Local</h3>
-
-                    <input className="w-70 uppercase bg-brand-blue-dark/50 px-3 py-2 rounded-lg text-white" placeholder="Nombre equipo"/>
-                  </div>
-
-                  <div className="w-86 flex flex-col gap-y-2 items-center">
-                    <h3 className="text-2xl font-bold text-white uppercase text-center">Visitante</h3>
-
-                    <input className="w-70 uppercase bg-brand-blue-dark/50 px-3 py-2 rounded-lg text-white" placeholder="Nombre equipo"/>
-                  </div>
-                </div>
-            </div>
+    const [qrAbierto, setQrAbierto] = useState(false);
 
 
-            {/* PopUp QR */}
-            {qrAbierto && (
-              <div
-                className="fixed inset-0 z-50 flex items-center justify-center bg-brand-blue-deep/85 p-5 backdrop-blur-sm"
-                onClick={() => setQrAbierto(false)}
-                role="dialog"
-                aria-modal="true"
-                aria-label="Código QR de vinculación"
-              >
-                <div
-                  className="relative flex max-h-[95vh] w-full max-w-xl flex-col items-center rounded-2xl border-2 border-primary bg-brand-blue-dark p-7 shadow-2xl"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <button
-                    type="button"
-                    onClick={() => setQrAbierto(false)}
-                    className="absolute top-4 right-4 flex size-10 cursor-pointer items-center justify-center rounded-full bg-brand-blue-light text-2xl font-bold text-white transition-colors hover:bg-primary hover:text-brand-blue-deep"
-                    aria-label="Cerrar código QR"
-                  >
-                    ×
-                  </button>
+    // 5. RELOJ MANUAL
 
-                  <div className="mb-5 text-center">
-                    <h2 className="text-3xl font-bold uppercase text-primary">
-                      Vincular controlador
-                    </h2>
+    const [relojManual, setRelojManual] = useState("10:00");
 
-                    <p className="mt-1 text-white/70">
-                      Escanea el código desde el móvil o la tablet
-                    </p>
-                  </div>
 
-                  <div className="overflow-hidden rounded-2xl bg-white p-3">
-                    <QrVinculacion
-                      partidoId={vinculacionId}
-                      size={360}
+    // 6. ESTADO DE CONSULTA FBIB
+
+    const [estadoFBIB, setEstadoFBIB] = useState<
+        "consultando" | "disponible" | "error"
+    >("consultando");
+
+
+    // 7. CONSULTAS FBIB EXISTENTES
+
+    useEffect(() => {
+
+        let activo = true;
+
+        const mes = new Date().getMonth();
+
+        Promise.allSettled([
+            obtenerCalendarioConfiguradoFBIB(mes),
+            obtenerEquiposClubFBIB(),
+        ]).then((resultados) => {
+
+            if (!activo) return;
+
+            const correcto = resultados.every(
+                (resultado) =>
+                    resultado.status === "fulfilled",
+            );
+
+            setEstadoFBIB(
+                correcto ? "disponible" : "error",
+            );
+
+            if (!correcto) {
+                console.warn(
+                    "Alguna consulta FBIB no está disponible.",
+                    resultados,
+                );
+            }
+
+        });
+
+        return () => {
+            activo = false;
+        };
+
+    }, []);
+
+
+    // 8. CATEGORÍA ACTUAL
+
+    const categoriaSeleccionada = CATEGORIAS.find(
+        (categoria) =>
+            categoria.id === partido?.categoriaId,
+    );
+
+    const reglas = categoriaSeleccionada?.reglamento;
+
+
+    // 9. ÚNICO RETURN
+
+    return (
+        <>
+
+            {/* ====================================
+                VISOR DEL MARCADOR
+                ==================================== */}
+
+            <VisorMarcador
+                diseno={disenoActivo}
+                datos={datos}
+            />
+
+
+            {/* ====================================
+                PÁGINA DE CONFIGURACIÓN
+                ==================================== */}
+
+            <main className="min-h-screen w-full bg-brand-blue-deep text-white">
+
+                {/* PRIMERA FILA:
+                    RESERVA DE CAPTURA + CONTROL
+                */}
+
+                <section className="grid w-full grid-cols-1 min-[1180px]:grid-cols-[832px_minmax(0,1fr)]">
+
+                    {/* ESPACIO RESERVADO PARA EL VISOR */}
+
+                    <div
+                        aria-hidden="true"
+                        className="pointer-events-none"
+                        style={{
+                            width: "min(832px, 100vw)",
+
+                            height:
+                                "calc(min(520px, 62.5vw) + 128px)",
+                        }}
                     />
-                  </div>
 
-                  <p className="mt-5 text-sm font-semibold uppercase text-white/60">
-                    Código de partido
-                  </p>
 
-                  <span className="bebas-neue text-5xl font-bold tracking-wider text-white">
-                    {vinculacionId}
-                  </span>
-                </div>
-              </div>
-            )}
-        </section>
+                    {/* CONTROL RÁPIDO */}
 
-        
-    </main>
-    <div className="w-full bg-brand-blue-deep h-30 gap-y-5 p-4">
-        <div className="max-w-7xl w-full h-full mx-auto flex flex-col gap-y-5 items-center place-content-center">
-            <div className="w-max h-max px-4 py-1 flex gap-x-2 rounded-lg items-center bg-primary-container">
-            <svg xmlns="http://www.w3.org/2000/svg" className="w-8 h-8 fill-brand-blue-dark" viewBox="0 -960 960 960">
-              <path d="M440-320h80v-166l64 63 57-57-161-160-160 160 57 56 63-63zM160-160q-33 0-56.5-23.5T80-240v-480q0-33 23.5-56.5T160-800h640q33 0 56.5 23.5T880-720v480q0 33-23.5 56.5T800-160zm0-80h640v-480H160zm0 0v-480z"/>
-            </svg>
-            <p className="text-brand-blue-dark text-2xl font-bold">Abrir Proyección</p>
-          </div>
-        </div>
-        
-    </div>
-    </>
-  );
+                    <aside className="min-w-0 p-4 sm:p-6">
+
+                        <div className="rounded-2xl border border-white/15 bg-brand-blue-dark p-5 shadow-xl">
+
+                            <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+
+                                <div>
+                                    <h1 className="text-2xl font-bold uppercase text-primary">
+                                        Control del marcador
+                                    </h1>
+
+                                    <p className="mt-1 text-sm text-white/60">
+                                        Modificaciones en directo
+                                    </p>
+                                </div>
+
+                                <span className="rounded-lg bg-brand-blue-deep px-3 py-2 text-xs font-semibold text-white/80">
+                                    {disenoActivo.nombre}
+                                </span>
+
+                            </div>
+
+
+                            {/* PUNTUACIONES */}
+
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 min-[1180px]:grid-cols-1 min-[1600px]:grid-cols-2">
+
+                                {(["local", "visitante"] as const).map(
+                                    (lado) => (
+
+                                        <div
+                                            key={lado}
+                                            className="min-w-0 rounded-xl bg-brand-blue-deep p-4"
+                                        >
+
+                                            <p className="text-center text-xs font-bold uppercase tracking-wider text-white/60">
+                                                {lado === "local"
+                                                    ? "Equipo local"
+                                                    : "Equipo visitante"}
+                                            </p>
+
+                                            <p className="mt-1 truncate text-center text-sm font-semibold text-white">
+                                                {partido?.[lado].nombre ?? "-"}
+                                            </p>
+
+                                            <p className="bebas-neue mt-2 text-center text-6xl text-primary">
+                                                {partido?.[lado].puntos ?? 0}
+                                            </p>
+
+                                            <div className="mt-3 grid grid-cols-3 gap-2">
+
+                                                <button
+                                                    type="button"
+                                                    disabled={!partido}
+                                                    onClick={() => {
+
+                                                        if (!partido) return;
+
+                                                        actualizarEquipo(
+                                                            lado,
+                                                            {
+                                                                puntos: Math.max(
+                                                                    0,
+                                                                    partido[lado].puntos - 1,
+                                                                ),
+                                                            },
+                                                        );
+
+                                                    }}
+                                                    className="min-h-11 cursor-pointer rounded-lg bg-white/10 text-xl font-bold hover:bg-white/20 disabled:opacity-50"
+                                                >
+                                                    −1
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    disabled={!partido}
+                                                    onClick={() => {
+
+                                                        if (!partido) return;
+
+                                                        actualizarEquipo(
+                                                            lado,
+                                                            {
+                                                                puntos:
+                                                                    partido[lado].puntos + 1,
+                                                            },
+                                                        );
+
+                                                    }}
+                                                    className="min-h-11 cursor-pointer rounded-lg bg-primary text-xl font-bold text-brand-blue-deep hover:bg-brand-yellow-bright disabled:opacity-50"
+                                                >
+                                                    +1
+                                                </button>
+
+                                                <button
+                                                    type="button"
+                                                    disabled={!partido}
+                                                    onClick={() => {
+
+                                                        if (!partido) return;
+
+                                                        actualizarEquipo(
+                                                            lado,
+                                                            {
+                                                                puntos:
+                                                                    partido[lado].puntos + 2,
+                                                            },
+                                                        );
+
+                                                    }}
+                                                    className="min-h-11 cursor-pointer rounded-lg bg-primary/80 text-lg font-bold text-brand-blue-deep hover:bg-primary disabled:opacity-50"
+                                                >
+                                                    +2
+                                                </button>
+
+                                            </div>
+
+                                            {/* FALTAS */}
+
+                                            <div className="mt-4 flex items-center justify-between gap-2">
+
+                                                <span className="text-sm text-white/75">
+                                                    Faltas
+                                                </span>
+
+                                                <div className="flex items-center gap-2">
+
+                                                    <button
+                                                        type="button"
+                                                        disabled={!partido}
+                                                        onClick={() => {
+
+                                                            if (!partido) return;
+
+                                                            actualizarEquipo(
+                                                                lado,
+                                                                {
+                                                                    faltas: Math.max(
+                                                                        0,
+                                                                        partido[lado].faltas - 1,
+                                                                    ),
+                                                                },
+                                                            );
+
+                                                        }}
+                                                        className="flex size-8 cursor-pointer items-center justify-center rounded bg-white/10 font-bold hover:bg-white/20 disabled:opacity-50"
+                                                    >
+                                                        −
+                                                    </button>
+
+                                                    <span className="min-w-5 text-center font-bold">
+                                                        {partido?.[lado].faltas ?? 0}
+                                                    </span>
+
+                                                    <button
+                                                        type="button"
+                                                        disabled={!partido}
+                                                        onClick={() => {
+
+                                                            if (!partido) return;
+
+                                                            actualizarEquipo(
+                                                                lado,
+                                                                {
+                                                                    faltas:
+                                                                        partido[lado].faltas + 1,
+                                                                },
+                                                            );
+
+                                                        }}
+                                                        className="flex size-8 cursor-pointer items-center justify-center rounded bg-primary font-bold text-brand-blue-deep disabled:opacity-50"
+                                                    >
+                                                        +
+                                                    </button>
+
+                                                </div>
+
+                                            </div>
+
+
+                                            {/* TIEMPOS MUERTOS */}
+
+                                            <div className="mt-3 flex items-center justify-between gap-2">
+
+                                                <span className="text-sm text-white/75">
+                                                    T. muertos usados
+                                                </span>
+
+                                                <div className="flex items-center gap-2">
+
+                                                    <button
+                                                        type="button"
+                                                        disabled={!partido}
+                                                        onClick={() => {
+
+                                                            if (!partido) return;
+
+                                                            actualizarEquipo(
+                                                                lado,
+                                                                {
+                                                                    tiemposMuertos: Math.max(
+                                                                        0,
+                                                                        partido[lado].tiemposMuertos - 1,
+                                                                    ),
+                                                                },
+                                                            );
+
+                                                        }}
+                                                        className="flex size-8 cursor-pointer items-center justify-center rounded bg-white/10 font-bold hover:bg-white/20 disabled:opacity-50"
+                                                    >
+                                                        −
+                                                    </button>
+
+                                                    <span className="min-w-5 text-center font-bold">
+                                                        {partido?.[lado].tiemposMuertos ?? 0}
+                                                    </span>
+
+                                                    <button
+                                                        type="button"
+                                                        disabled={!partido}
+                                                        onClick={() => {
+
+                                                            if (!partido) return;
+
+                                                            actualizarEquipo(
+                                                                lado,
+                                                                {
+                                                                    tiemposMuertos:
+                                                                        partido[lado].tiemposMuertos + 1,
+                                                                },
+                                                            );
+
+                                                        }}
+                                                        className="flex size-8 cursor-pointer items-center justify-center rounded bg-primary font-bold text-brand-blue-deep disabled:opacity-50"
+                                                    >
+                                                        +
+                                                    </button>
+
+                                                </div>
+
+                                            </div>
+
+                                        </div>
+
+                                    ),
+                                )}
+
+                            </div>
+
+
+                            {/* PERIODO */}
+
+                            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-brand-blue-deep p-4">
+
+                                <div>
+                                    <p className="text-xs uppercase text-white/60">
+                                        Periodo actual
+                                    </p>
+
+                                    <p className="bebas-neue text-4xl text-primary">
+                                        {partido?.periodo ?? 1}
+                                    </p>
+                                </div>
+
+                                <div className="flex gap-2">
+
+                                    <button
+                                        type="button"
+                                        disabled={!partido}
+                                        onClick={() => {
+
+                                            if (!partido) return;
+
+                                            actualizarPeriodo(
+                                                partido.periodo - 1,
+                                            );
+
+                                        }}
+                                        className="min-h-11 min-w-12 cursor-pointer rounded-lg bg-white/10 text-xl font-bold hover:bg-white/20 disabled:opacity-50"
+                                    >
+                                        −
+                                    </button>
+
+                                    <button
+                                        type="button"
+                                        disabled={!partido}
+                                        onClick={() => {
+
+                                            if (!partido) return;
+
+                                            actualizarPeriodo(
+                                                partido.periodo + 1,
+                                            );
+
+                                        }}
+                                        className="min-h-11 min-w-12 cursor-pointer rounded-lg bg-primary text-xl font-bold text-brand-blue-deep hover:bg-brand-yellow-bright disabled:opacity-50"
+                                    >
+                                        +
+                                    </button>
+
+                                </div>
+
+                            </div>
+
+
+                            {/* RELOJ MANUAL */}
+
+                            <div className="mt-4 rounded-xl bg-brand-blue-deep p-4">
+
+                                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+
+                                    <div>
+                                        <p className="text-sm font-semibold text-white">
+                                            Tiempo de juego
+                                        </p>
+
+                                        <p className="text-xs text-white/60">
+                                            Fuente: {reloj?.fuente ?? "sin configurar"}
+                                        </p>
+                                    </div>
+
+                                    <span className="bebas-neue text-3xl text-primary">
+                                        {reloj?.texto ?? "--:--"}
+                                    </span>
+
+                                </div>
+
+                                <div className="flex gap-2">
+
+                                    <input
+                                        type="text"
+                                        value={relojManual}
+                                        onChange={(evento) =>
+                                            setRelojManual(evento.target.value)
+                                        }
+                                        placeholder="10:00"
+                                        aria-label="Tiempo manual"
+                                        className="min-w-0 flex-1 rounded-lg border border-white/15 bg-brand-blue-dark px-3 py-2 text-white outline-none focus:border-primary"
+                                    />
+
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+
+                                            const valor = relojManual.trim();
+
+                                            if (!/^\d{1,2}:\d{2}$/.test(valor)) {
+                                                return;
+                                            }
+
+                                            const [minutos, segundos] =
+                                                valor.split(":").map(Number);
+
+                                            if (
+                                                minutos > 99 ||
+                                                segundos > 59
+                                            ) {
+                                                return;
+                                            }
+
+                                            actualizarReloj(
+                                                valor,
+                                                ID_RELOJ_PRINCIPAL,
+                                                "manual",
+                                            );
+
+                                        }}
+                                        className="min-h-11 cursor-pointer rounded-lg bg-primary px-4 font-bold text-brand-blue-deep hover:bg-brand-yellow-bright"
+                                    >
+                                        Aplicar
+                                    </button>
+
+                                </div>
+
+                                <p className="mt-2 text-xs text-white/50">
+                                    Entrada manual provisional.
+                                    La lectura COM4 se integrará después.
+                                </p>
+
+                            </div>
+
+                        </div>
+
+                    </aside>
+
+                </section>
+
+
+                {/* ====================================
+                    CONFIGURACIÓN GENERAL
+                    ==================================== */}
+
+                <section className="mx-auto grid w-full max-w-7xl grid-cols-1 gap-6 px-4 pb-12 sm:px-6 xl:grid-cols-2">
+
+
+                    {/* SELECCIÓN DEL DISEÑO */}
+
+                    <div className="rounded-2xl bg-brand-blue-light p-5 shadow-xl">
+
+                        <h2 className="text-2xl font-bold uppercase text-primary">
+                            Diseño de proyección
+                        </h2>
+
+                        <p className="mt-1 text-sm text-brand-blue-deep/80">
+                            Selecciona el diseño que se mostrará en el marcador.
+                        </p>
+
+                        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+                            {DISENOS.map((diseno) => (
+
+                                <button
+                                    type="button"
+                                    key={diseno.id}
+                                    onClick={() => {
+
+                                        setSelectedDiseno(diseno.id);
+
+                                        guardarDisenoSeleccionado(
+                                            diseno.id,
+                                        );
+
+                                    }}
+                                    className={`cursor-pointer rounded-xl border-2 p-3 text-left transition-colors ${
+                                        selectedDiseno === diseno.id
+                                            ? "border-primary bg-brand-blue-dark"
+                                            : "border-white/40 bg-brand-blue-dark/70 hover:border-white"
+                                    }`}
+                                >
+
+                                    <img
+                                        src={`/miniaturas/${diseno.miniatura}.png`}
+                                        alt={`Vista previa de ${diseno.nombre}`}
+                                        className="aspect-video w-full rounded-lg object-contain"
+                                    />
+
+                                    <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+
+                                        <span className="font-bold text-white">
+                                            {diseno.nombre}
+                                        </span>
+
+                                        {selectedDiseno === diseno.id && (
+                                            <span className="rounded bg-primary px-2 py-1 text-xs font-bold uppercase text-brand-blue-deep">
+                                                Activo
+                                            </span>
+                                        )}
+
+                                    </div>
+
+                                </button>
+
+                            ))}
+
+                        </div>
+
+                        <p className="mt-4 text-xs text-brand-blue-deep/75">
+                            Resolución del proyecto: 832 × 520 píxeles.
+                        </p>
+
+                    </div>
+
+
+                    {/* REGLAS Y TIEMPOS */}
+
+                    <div className="rounded-2xl bg-brand-blue-light p-5 shadow-xl">
+
+                        <h2 className="text-2xl font-bold uppercase text-primary">
+                            Reglas y tiempos
+                        </h2>
+
+                        <p className="mt-1 text-sm text-brand-blue-deep/80">
+                            Configuración según categoría.
+                        </p>
+
+                        <label className="mt-5 block text-sm font-semibold text-white">
+                            Categoría
+                        </label>
+
+                        <select
+                            value={partido?.categoriaId ?? ""}
+                            onChange={(evento) =>
+                                actualizarCategoria(
+                                    evento.target.value || null,
+                                )
+                            }
+                            className="mt-2 w-full cursor-pointer rounded-lg border border-white/20 bg-brand-blue-dark px-3 py-3 text-white outline-none focus:border-primary"
+                        >
+                            <option value="">
+                                Selecciona una categoría
+                            </option>
+
+                            {CATEGORIAS.map((categoria) => (
+                                <option
+                                    key={categoria.id}
+                                    value={categoria.id}
+                                >
+                                    {categoria.nombre}
+                                </option>
+                            ))}
+
+                        </select>
+
+
+                        {reglas ? (
+
+                            <div className="mt-5 grid grid-cols-2 gap-3">
+
+                                <div className="rounded-lg bg-brand-blue-dark p-4">
+                                    <p className="text-xs uppercase text-white/60">
+                                        Periodos
+                                    </p>
+
+                                    <p className="mt-2 text-2xl font-bold text-white">
+                                        {reglas.periodos.cantidad}
+                                    </p>
+                                </div>
+
+                                <div className="rounded-lg bg-brand-blue-dark p-4">
+                                    <p className="text-xs uppercase text-white/60">
+                                        Duración
+                                    </p>
+
+                                    <p className="mt-2 text-2xl font-bold text-white">
+                                        {reglas.periodos.duracion / 60} min
+                                    </p>
+                                </div>
+
+                                <div className="rounded-lg bg-brand-blue-dark p-4">
+                                    <p className="text-xs uppercase text-white/60">
+                                        Prórroga
+                                    </p>
+
+                                    <p className="mt-2 font-bold text-white">
+                                        {reglas.prorroga.permitida
+                                            ? "Habilitada"
+                                            : "Deshabilitada"}
+                                    </p>
+                                </div>
+
+                                <div className="rounded-lg bg-brand-blue-dark p-4">
+                                    <p className="text-xs uppercase text-white/60">
+                                        Duración prórroga
+                                    </p>
+
+                                    <p className="mt-2 text-2xl font-bold text-white">
+                                        {reglas.prorroga.duracion / 60} min
+                                    </p>
+                                </div>
+
+                            </div>
+
+                        ) : (
+
+                            <div className="mt-5 flex min-h-40 items-center justify-center rounded-xl bg-brand-blue-dark/50 p-5 text-center">
+
+                                <p className="text-white/70">
+                                    Selecciona una categoría para consultar las reglas.
+                                </p>
+
+                            </div>
+
+                        )}
+
+                    </div>
+
+
+                    {/* DATOS DEL PARTIDO */}
+
+                    <div className="rounded-2xl bg-brand-blue-light p-5 shadow-xl">
+
+                        <h2 className="text-2xl font-bold uppercase text-primary">
+                            Datos del partido
+                        </h2>
+
+                        <p className="mt-1 text-sm text-brand-blue-deep/80">
+                            Los cambios se reflejan directamente en el marcador.
+                        </p>
+
+                        <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+
+                            {(["local", "visitante"] as const).map(
+                                (lado) => (
+
+                                    <div
+                                        key={lado}
+                                        className="min-w-0 rounded-xl bg-brand-blue-dark p-4"
+                                    >
+
+                                        <h3 className="mb-4 text-center text-lg font-bold uppercase text-primary">
+                                            {lado === "local"
+                                                ? "Equipo local"
+                                                : "Equipo visitante"}
+                                        </h3>
+
+                                        <label className="block text-sm text-white/70">
+                                            Nombre del equipo
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            value={partido?.[lado].nombre ?? ""}
+                                            onChange={(evento) =>
+                                                actualizarEquipo(
+                                                    lado,
+                                                    {
+                                                        nombre:
+                                                            evento.target.value,
+                                                        fuenteNombre: "manual",
+                                                    },
+                                                )
+                                            }
+                                            placeholder="Nombre del equipo"
+                                            className="mt-2 w-full rounded-lg border border-white/15 bg-brand-blue-deep px-3 py-2 text-white outline-none focus:border-primary"
+                                        />
+
+                                        <label className="mt-4 block text-sm text-white/70">
+                                            Ruta o URL del escudo
+                                        </label>
+
+                                        <input
+                                            type="text"
+                                            value={partido?.[lado].escudo ?? ""}
+                                            onChange={(evento) =>
+                                                actualizarEquipo(
+                                                    lado,
+                                                    {
+                                                        escudo:
+                                                            evento.target.value || null,
+                                                        fuenteEscudo: "manual",
+                                                    },
+                                                )
+                                            }
+                                            placeholder="/img/escudo.png"
+                                            className="mt-2 w-full rounded-lg border border-white/15 bg-brand-blue-deep px-3 py-2 text-white outline-none focus:border-primary"
+                                        />
+
+                                    </div>
+
+                                ),
+                            )}
+
+                        </div>
+
+                    </div>
+
+
+                    {/* SINCRONIZACIÓN / VINCULACIÓN */}
+
+                    <div className="rounded-2xl bg-brand-blue-light p-5 shadow-xl">
+
+                        <h2 className="text-2xl font-bold uppercase text-primary">
+                            Sincronización
+                        </h2>
+
+                        <p className="mt-1 text-sm text-brand-blue-deep/80">
+                            Identificación del partido y acceso mediante QR.
+                        </p>
+
+                        <div className="mt-5 flex flex-wrap items-center justify-between gap-4 rounded-xl bg-brand-blue-dark p-4">
+
+                            <div>
+                                <p className="text-sm font-semibold uppercase text-white/60">
+                                    Código de vinculación
+                                </p>
+
+                                <p className="bebas-neue mt-2 text-4xl text-white">
+                                    {vinculacionId}
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                onClick={() =>
+                                    setQrAbierto((actual) => !actual)
+                                }
+                                className="cursor-pointer rounded-lg bg-white p-2 transition-transform hover:scale-105"
+                                aria-label="Mostrar u ocultar código QR"
+                                aria-expanded={qrAbierto}
+                            >
+                                <QrVinculacion
+                                    partidoId={vinculacionId}
+                                    size={80}
+                                />
+                            </button>
+
+                        </div>
+
+
+                        {/* QR AMPLIADO DENTRO DE LA CONFIGURACIÓN */}
+
+                        {qrAbierto && (
+
+                            <div className="mt-4 flex flex-col items-center gap-3 rounded-xl bg-brand-blue-dark p-5">
+
+                                <p className="text-center font-bold text-white">
+                                    Vincular controlador
+                                </p>
+
+                                <div className="rounded-lg bg-white p-3">
+
+                                    <QrVinculacion
+                                        partidoId={vinculacionId}
+                                        size={230}
+                                    />
+
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setQrAbierto(false)}
+                                    className="cursor-pointer rounded-lg bg-white/10 px-5 py-2 text-sm font-semibold text-white hover:bg-white/20"
+                                >
+                                    Cerrar QR
+                                </button>
+
+                            </div>
+
+                        )}
+
+
+                        {/* ESTADO FBIB */}
+
+                        <div className="mt-4 rounded-xl bg-brand-blue-dark p-4">
+
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+
+                                <div>
+                                    <p className="font-semibold text-white">
+                                        Consultas FBIB
+                                    </p>
+
+                                    <p className="text-xs text-white/60">
+                                        Equipos y calendario del club
+                                    </p>
+                                </div>
+
+                                <span className="rounded-lg bg-white/10 px-3 py-2 text-xs font-bold text-white">
+
+                                    {estadoFBIB === "consultando"
+                                        ? "Consultando..."
+                                        : estadoFBIB === "disponible"
+                                            ? "Consulta correcta"
+                                            : "No disponible"}
+
+                                </span>
+
+                            </div>
+
+                            <p className="mt-3 text-xs text-white/50">
+                                La consulta no implica sincronización con el marcador.
+                                La selección de partidos FBIB se incorporará en una fase posterior.
+                            </p>
+
+                        </div>
+
+                    </div>
+
+                </section>
+
+
+                {/* PIE DE PÁGINA */}
+
+                <footer className="border-t border-white/10 bg-brand-blue-dark px-5 py-6">
+
+                    <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+
+                        <p className="text-sm font-semibold text-white">
+                            C.B. Andratx · Sistema de marcador
+                        </p>
+
+                        <p className="text-xs text-white/50">
+                            Resolución MONDO: 832 × 520
+                        </p>
+
+                    </div>
+
+                </footer>
+
+            </main>
+
+        </>
+    );
 }
