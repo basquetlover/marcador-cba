@@ -19,7 +19,11 @@ import type {
     EquipoMarcador,
     FuenteTiempo,
     LadoEquipo,
+    PartidoMarcador,
 } from "./tipos";
+
+import { DecodificadorMondo } from "./DecodificadorMondo";
+import type { PeriodoMondo } from "./DecodificadorMondo";
 
 import {
     DATOS_INICIALES,
@@ -28,8 +32,10 @@ import {
 
 /* ============================================
    MARCADOR CBA - WEB SERIAL
-   Lectura directa de MONDO desde Chrome/Edge
-   Sin Node.js, servidor local ni WebSocket
+   Conexión directa con MONDO mediante COM4.
+
+   El decodificador es independiente de React.
+   No se utiliza servidor ni WebSocket.
    ============================================ */
 
 export type ModoReloj =
@@ -37,6 +43,8 @@ export type ModoReloj =
     | "mondo"
     | "simulacion";
 
+// Se conserva el nombre por compatibilidad
+// con el panel Control.tsx existente.
 export type EstadoWebSocket =
     | "inactivo"
     | "conectando"
@@ -51,17 +59,23 @@ export type EstadoPuertoMondo =
     | "desconectado";
 
 export interface EstadoConexionMondo {
-    // Se conserva este nombre para que el panel
-    // Control.tsx actual siga siendo compatible.
-    // Ya NO se utiliza ningún WebSocket.
     websocket: EstadoWebSocket;
     puerto: EstadoPuertoMondo;
     detalle: string;
     ultimaLecturaEn: number | null;
 }
 
+// Extensión provisional compatible con los
+// tipos actuales del partido. Se incorporará
+// a tipos.ts cuando actualicemos ese archivo.
+type PartidoConPeriodoMondo = PartidoMarcador & {
+    periodoMondo?: PeriodoMondo | null;
+};
+
 interface ContextoMarcador {
     datos: DatosMarcador;
+
+    periodoMondo: PeriodoMondo | null;
 
     establecerDatos:
         Dispatch<SetStateAction<DatosMarcador>>;
@@ -89,11 +103,15 @@ interface ContextoMarcador {
     ) => void;
 
     modoReloj: ModoReloj;
+
     cambiarModoReloj: (modo: ModoReloj) => void;
+
     reiniciarSimulacion: () => void;
 
     estadoMondo: EstadoConexionMondo;
+
     reconectarMondo: () => void;
+
     activarRelojMondo: (relojId?: string) => void;
 }
 
@@ -104,10 +122,13 @@ interface MarcadorProviderProps {
     children: ReactNode;
 }
 
-// TIPOS WEB SERIAL
+/* ============================================
+   WEB SERIAL
+   ============================================ */
 
 interface PuertoSerieWeb {
-    readonly readable: ReadableStream<Uint8Array> | null;
+    readonly readable:
+        ReadableStream<Uint8Array> | null;
 
     open(options: {
         baudRate: number;
@@ -133,14 +154,16 @@ function obtenerSerial(): NavegadorSerial | null {
     ).serial ?? null;
 }
 
-const CLAVE_MODO = "cba.marcador.modo-reloj.v1";
-const INICIO_SIMULACION = 8 * 60_000 + 34_000;
+const CLAVE_MODO =
+    "cba.marcador.modo-reloj.v1";
 
-// MODO GUARDADO
+const INICIO_SIMULACION =
+    8 * 60_000 + 34_000;
 
 function leerModoGuardado(): ModoReloj {
     try {
-        const valor = localStorage.getItem(CLAVE_MODO);
+        const valor =
+            localStorage.getItem(CLAVE_MODO);
 
         if (
             valor === "manual" ||
@@ -150,151 +173,62 @@ function leerModoGuardado(): ModoReloj {
             return valor;
         }
     } catch {
-        // Funciona también sin almacenamiento.
+        // Funciona sin almacenamiento.
     }
 
     return "manual";
 }
 
-// RELOJ SIMULADO
-
 function tiempoSimulado(ms: number): string {
     const restante = Math.max(0, ms);
 
     if (restante >= 60_000) {
-        const total = Math.ceil(restante / 1000);
+        const total =
+            Math.ceil(restante / 1000);
 
         return (
-            String(Math.floor(total / 60)).padStart(2, "0") +
+            String(Math.floor(total / 60))
+                .padStart(2, "0") +
             ":" +
-            String(total % 60).padStart(2, "0")
+            String(total % 60)
+                .padStart(2, "0")
         );
     }
 
-    const decimas = Math.ceil(restante / 100);
+    const decimas =
+        Math.ceil(restante / 100);
 
     return (
-        String(Math.floor(decimas / 10)).padStart(2, "0") +
+        String(Math.floor(decimas / 10))
+            .padStart(2, "0") +
         "." +
         String(decimas % 10)
     );
 }
 
-// ============================================
-// TRADUCTOR DEL RELOJ MONDO
-//
-// Normal:        A3 A2 : A1 A0
-// Último minuto: A3 A2 . A1
-//
-// A0 = 5F activa último minuto.
-// ============================================
-
-class DecodificadorTiempoMondo {
-    private trama: number[] = [];
-
-    private digitos: Array<number | null> = [
-        null, null, null, null,
-    ];
-
-    private ultimoMinuto = false;
-    private ultimoTexto = "";
-
-    recibir(
-        bytes: Uint8Array,
-        emitir: (texto: string) => void,
-    ) {
-        for (const byte of bytes) {
-            if (byte === 0x02) {
-                this.trama = [byte];
-                continue;
-            }
-
-            if (!this.trama.length) continue;
-
-            this.trama.push(byte);
-
-            if (this.trama.length < 4) continue;
-
-            const [inicio, direccion, dato, fin] =
-                this.trama;
-
-            this.trama = [];
-
-            if (inicio !== 0x02 || fin !== 0x03) {
-                continue;
-            }
-
-            if (direccion < 0xa0 || direccion > 0xa3) {
-                continue;
-            }
-
-            const indice = 0xa3 - direccion;
-
-            if (direccion === 0xa0 && dato === 0x5f) {
-                this.digitos[3] = null;
-                this.ultimoMinuto = true;
-            } else if (dato >= 0x50 && dato <= 0x59) {
-                this.digitos[indice] = dato - 0x50;
-
-                if (direccion === 0xa0) {
-                    this.ultimoMinuto = false;
-                }
-            } else {
-                this.digitos[indice] = null;
-                continue;
-            }
-
-            const necesarios =
-                this.ultimoMinuto ? 3 : 4;
-
-            if (
-                this.digitos
-                    .slice(0, necesarios)
-                    .some((digito) => digito === null)
-            ) {
-                continue;
-            }
-
-            const [a3, a2, a1, a0] =
-                this.digitos as number[];
-
-            const texto = this.ultimoMinuto
-                ? `${a3}${a2}.${a1}`
-                : `${a3}${a2}:${a1}${a0}`;
-
-            const segundos = this.ultimoMinuto
-                ? a3 * 10 + a2
-                : a1 * 10 + a0;
-
-            if (segundos > 59) continue;
-            if (texto === this.ultimoTexto) continue;
-
-            this.ultimoTexto = texto;
-            emitir(texto);
-        }
-    }
-}
-
-function mensajeError(error: unknown): string {
+function mensajeError(
+    error: unknown,
+): string {
     return error instanceof Error
         ? error.message
         : "Error desconocido del puerto serie";
 }
 
-// ============================================
-// PROVIDER
-// ============================================
+/* ============================================
+   PROVIDER
+   ============================================ */
 
 export default function MarcadorProvider({
     children,
 }: MarcadorProviderProps) {
+
     const [modoReloj, setModoReloj] =
         useState<ModoReloj>(leerModoGuardado);
 
     const modoRef = useRef(modoReloj);
 
-    const [datos, establecerDatos] = useState<DatosMarcador>(
-        () => ({
+    const [datos, establecerDatos] =
+        useState<DatosMarcador>(() => ({
             ...DATOS_INICIALES,
 
             relojes: {
@@ -318,8 +252,16 @@ export default function MarcadorProvider({
                                 : "10:00",
                 },
             },
-        }),
-    );
+        }));
+
+    // Estado completo del período recibido.
+    // Separado de partido.periodo (numérico).
+
+    const periodoMondo = (
+        datos.partidos[
+            datos.partidoPrincipalId
+        ] as PartidoConPeriodoMondo | undefined
+    )?.periodoMondo ?? null;
 
     const [estadoMondo, setEstadoMondo] =
         useState<EstadoConexionMondo>({
@@ -329,36 +271,51 @@ export default function MarcadorProvider({
             ultimaLecturaEn: null,
         });
 
-    const [reinicioSimulacion, setReinicioSimulacion] =
-        useState(0);
+    const [
+        reinicioSimulacion,
+        setReinicioSimulacion,
+    ] = useState(0);
 
-    // REFERENCIAS DEL PUERTO
+    /* ========================================
+       REFERENCIAS DEL PUERTO
+       ======================================== */
 
-    const puertoRef = useRef<PuertoSerieWeb | null>(null);
+    const puertoRef =
+        useRef<PuertoSerieWeb | null>(null);
 
     const lectorRef = useRef<
-        ReadableStreamDefaultReader<Uint8Array> | null
+        ReadableStreamDefaultReader<
+            Uint8Array
+        > | null
     >(null);
 
-    const tareaLecturaRef = useRef<Promise<void> | null>(
-        null,
-    );
+    const tareaLecturaRef =
+        useRef<Promise<void> | null>(null);
 
     const sesionRef = useRef(0);
+
     const conectandoRef = useRef(false);
+
     const solicitandoRef = useRef(false);
 
-    // GUARDAR MODO LOCALMENTE
+    /* ========================================
+       GUARDAR MODO
+       ======================================== */
 
     useEffect(() => {
         try {
-            localStorage.setItem(CLAVE_MODO, modoReloj);
+            localStorage.setItem(
+                CLAVE_MODO,
+                modoReloj,
+            );
         } catch {
-            // No impedir su funcionamiento.
+            // No impedir funcionamiento.
         }
     }, [modoReloj]);
 
-    // EQUIPOS
+    /* ========================================
+       EQUIPOS
+       ======================================== */
 
     const actualizarEquipo = useCallback((
         lado: LadoEquipo,
@@ -367,7 +324,8 @@ export default function MarcadorProvider({
     ) => {
         establecerDatos((actual) => {
             const id =
-                partidoId ?? actual.partidoPrincipalId;
+                partidoId ??
+                actual.partidoPrincipalId;
 
             const partido = actual.partidos[id];
 
@@ -392,13 +350,23 @@ export default function MarcadorProvider({
         });
     }, []);
 
-    // PERIODO
+    /* ========================================
+       PERÍODO MANUAL
+       ======================================== */
 
     const actualizarPeriodo = useCallback((
         periodo: number,
         partidoId?: string,
     ) => {
-        if (!Number.isFinite(periodo)) return;
+        // Mientras MONDO esté activo, COM4
+        // tiene prioridad sobre el control manual.
+        if (modoRef.current === "mondo") {
+            return;
+        }
+
+        if (!Number.isFinite(periodo)) {
+            return;
+        }
 
         const periodoNuevo = Math.max(
             1,
@@ -407,7 +375,8 @@ export default function MarcadorProvider({
 
         establecerDatos((actual) => {
             const id =
-                partidoId ?? actual.partidoPrincipalId;
+                partidoId ??
+                actual.partidoPrincipalId;
 
             const partido = actual.partidos[id];
 
@@ -427,13 +396,16 @@ export default function MarcadorProvider({
                     [id]: {
                         ...partido,
                         periodo: periodoNuevo,
+                        periodoMondo: null,
                     },
                 },
             };
         });
     }, []);
 
-    // CATEGORÍA
+    /* ========================================
+       CATEGORÍA
+       ======================================== */
 
     const actualizarCategoria = useCallback((
         categoriaId: string | null,
@@ -441,7 +413,8 @@ export default function MarcadorProvider({
     ) => {
         establecerDatos((actual) => {
             const id =
-                partidoId ?? actual.partidoPrincipalId;
+                partidoId ??
+                actual.partidoPrincipalId;
 
             const partido = actual.partidos[id];
 
@@ -467,7 +440,9 @@ export default function MarcadorProvider({
         });
     }, []);
 
-    // ACTUALIZAR RELOJ MANUAL
+    /* ========================================
+       RELOJ MANUAL
+       ======================================== */
 
     const actualizarReloj = useCallback((
         texto: string,
@@ -480,11 +455,13 @@ export default function MarcadorProvider({
         }
 
         establecerDatos((actual) => {
-            const reloj = actual.relojes[relojId];
+            const reloj =
+                actual.relojes[relojId];
 
             if (!reloj) return actual;
 
-            const fuenteNueva = fuente ?? reloj.fuente;
+            const fuenteNueva =
+                fuente ?? reloj.fuente;
 
             if (
                 reloj.texto === texto &&
@@ -510,11 +487,13 @@ export default function MarcadorProvider({
         });
     }, []);
 
-    // ========================================
-    // LIBERAR EL PUERTO SERIE
-    // ========================================
+    /* ========================================
+       CERRAR PUERTO SERIE
+       ======================================== */
 
-    const detenerPuerto = useCallback(async () => {
+    const detenerPuerto =
+        useCallback(async () => {
+
         const sesion = ++sesionRef.current;
 
         const lector = lectorRef.current;
@@ -527,7 +506,8 @@ export default function MarcadorProvider({
             }
         }
 
-        const tarea = tareaLecturaRef.current;
+        const tarea =
+            tareaLecturaRef.current;
 
         if (tarea) {
             try {
@@ -543,7 +523,7 @@ export default function MarcadorProvider({
             try {
                 await puerto.close();
             } catch {
-                // Ya cerrado o abriéndose.
+                // Ya cerrado.
             }
 
             if (puertoRef.current === puerto) {
@@ -556,9 +536,9 @@ export default function MarcadorProvider({
         }
     }, []);
 
-    // ========================================
-    // ABRIR Y LEER COM
-    // ========================================
+    /* ========================================
+       ABRIR COM4 Y LEER TRAMAS
+       ======================================== */
 
     const abrirPuerto = useCallback(async (
         puerto: PuertoSerieWeb,
@@ -579,7 +559,8 @@ export default function MarcadorProvider({
             ...anterior,
             websocket: "conectando",
             puerto: "conectando",
-            detalle: "Abriendo puerto serie a 19200 baudios...",
+            detalle:
+                "Abriendo puerto serie a 19200 baudios...",
         }));
 
         try {
@@ -612,10 +593,140 @@ export default function MarcadorProvider({
                     "Puerto abierto. Esperando datos de MONDO...",
             }));
 
-            const decodificador =
-                new DecodificadorTiempoMondo();
+            /* ================================
+               DECODIFICADOR INDEPENDIENTE
+               ================================ */
 
-            // LECTURA CONTINUA
+            const decodificador =
+                new DecodificadorMondo({
+
+                /* ============================
+                   RELOJ
+                   ============================ */
+
+                alTiempo: (lectura) => {
+                    if (
+                        sesion !== sesionRef.current ||
+                        modoRef.current !== "mondo"
+                    ) {
+                        return;
+                    }
+
+                    setEstadoMondo((anterior) => ({
+                        ...anterior,
+                        ultimaLecturaEn: Date.now(),
+                        detalle:
+                            "Recibiendo tiempo de MONDO.",
+                    }));
+
+                    establecerDatos((actual) => {
+                        const reloj =
+                            actual.relojes[
+                                ID_RELOJ_PRINCIPAL
+                            ];
+
+                        if (
+                            !reloj ||
+                            reloj.fuente !== "mondo" ||
+                            reloj.texto === lectura.texto
+                        ) {
+                            return actual;
+                        }
+
+                        return {
+                            ...actual,
+
+                            relojes: {
+                                ...actual.relojes,
+
+                                [ID_RELOJ_PRINCIPAL]: {
+                                    ...reloj,
+                                    texto: lectura.texto,
+                                    actualizadoEn:
+                                        lectura.recibidoEn,
+                                },
+                            },
+                        };
+                    });
+                },
+
+                /* ============================
+                   PERÍODO
+                   ============================ */
+
+                alPeriodo: (lectura) => {
+                    if (
+                        sesion !== sesionRef.current ||
+                        modoRef.current !== "mondo"
+                    ) {
+                        return;
+                    }
+
+                    setEstadoMondo((anterior) => ({
+                        ...anterior,
+                        ultimaLecturaEn: Date.now(),
+                        detalle:
+                            "Recibiendo periodo de MONDO.",
+                    }));
+
+                    establecerDatos((actual) => {
+                        const id =
+                            actual.partidoPrincipalId;
+
+                        const partido =
+                            actual.partidos[id] as
+                                PartidoConPeriodoMondo |
+                                undefined;
+
+                        if (!partido) {
+                            return actual;
+                        }
+
+                        // Solo un período normal
+                        // modifica el número.
+                        //
+                        // En overtime y empty
+                        // conservamos el último
+                        // número conocido.
+
+                        const numero =
+                            lectura.type === "quarter" &&
+                            lectura.number !== null
+                                ? lectura.number
+                                : partido.periodo;
+
+                        if (
+                            partido.periodoMondo?.raw ===
+                                lectura.raw &&
+                            partido.periodo === numero
+                        ) {
+                            return actual;
+                        }
+
+                        return {
+                            ...actual,
+
+                            partidos: {
+                                ...actual.partidos,
+
+                                [id]: {
+                                    ...partido,
+
+                                    periodo: numero,
+
+                                    periodoMondo: {
+                                        ...lectura,
+                                    },
+                                },
+                            },
+                        };
+                    });
+                },
+            });
+
+            /* ================================
+               LECTURA CONTINUA DE WEB SERIAL
+               ================================ */
 
             const tarea = async () => {
                 try {
@@ -632,8 +743,10 @@ export default function MarcadorProvider({
                             while (
                                 sesion === sesionRef.current
                             ) {
-                                const { value, done } =
-                                    await lector.read();
+                                const {
+                                    value,
+                                    done,
+                                } = await lector.read();
 
                                 if (done) break;
 
@@ -644,57 +757,12 @@ export default function MarcadorProvider({
                                     continue;
                                 }
 
-                                // INTERPRETAR BYTES MONDO
+                                // Web Serial proporciona
+                                // bytes originales de COM4.
+                                // El decoder mantiene
+                                // su propio buffer.
 
-                                decodificador.recibir(
-                                    value,
-                                    (texto) => {
-                                        if (
-                                            sesion !==
-                                                sesionRef.current ||
-                                            modoRef.current !== "mondo"
-                                        ) {
-                                            return;
-                                        }
-
-                                        setEstadoMondo((anterior) => ({
-                                            ...anterior,
-                                            ultimaLecturaEn: Date.now(),
-                                            detalle:
-                                                "Recibiendo tiempo de MONDO.",
-                                        }));
-
-                                        establecerDatos((actual) => {
-                                            const reloj =
-                                                actual.relojes[
-                                                    ID_RELOJ_PRINCIPAL
-                                                ];
-
-                                            if (
-                                                !reloj ||
-                                                reloj.fuente !== "mondo" ||
-                                                reloj.texto === texto
-                                            ) {
-                                                return actual;
-                                            }
-
-                                            return {
-                                                ...actual,
-
-                                                relojes: {
-                                                    ...actual.relojes,
-
-                                                    [ID_RELOJ_PRINCIPAL]: {
-                                                        ...reloj,
-                                                        texto,
-                                                        actualizadoEn:
-                                                            Date.now(),
-                                                    },
-                                                },
-                                            };
-                                        });
-                                    },
-                                );
+                                decodificador.recibir(value);
                             }
                         } finally {
                             if (
@@ -707,7 +775,9 @@ export default function MarcadorProvider({
                         }
                     }
                 } catch (error) {
-                    if (sesion === sesionRef.current) {
+                    if (
+                        sesion === sesionRef.current
+                    ) {
                         setEstadoMondo((anterior) => ({
                             ...anterior,
                             websocket: "error",
@@ -743,6 +813,7 @@ export default function MarcadorProvider({
             };
 
             tareaLecturaRef.current = tarea();
+
         } catch (error) {
             if (sesion === sesionRef.current) {
                 conectandoRef.current = false;
@@ -761,11 +832,13 @@ export default function MarcadorProvider({
         }
     }, []);
 
-    // ========================================
-    // SELECTOR NATIVO DEL NAVEGADOR
-    // ========================================
+    /* ========================================
+       SELECCIONAR PUERTO DEL NAVEGADOR
+       ======================================== */
 
-    const seleccionarPuerto = useCallback(() => {
+    const seleccionarPuerto =
+        useCallback(() => {
+
         const serial = obtenerSerial();
 
         modoRef.current = "mondo";
@@ -788,12 +861,13 @@ export default function MarcadorProvider({
 
         solicitandoRef.current = true;
 
-        // requestPort se ejecuta directamente
-        // desde el clic del usuario.
-
-        let promesaPuerto: Promise<PuertoSerieWeb>;
+        let promesaPuerto:
+            Promise<PuertoSerieWeb>;
 
         try {
+            // Se ejecuta desde el clic
+            // para conservar la activación
+            // de usuario requerida por Chrome.
             promesaPuerto = serial.requestPort();
         } catch (error) {
             solicitandoRef.current = false;
@@ -810,39 +884,51 @@ export default function MarcadorProvider({
             return;
         }
 
-        void promesaPuerto.then(async (puerto) => {
-            solicitandoRef.current = false;
+        void promesaPuerto
+            .then(async (puerto) => {
+                solicitandoRef.current = false;
 
-            if (modoRef.current !== "mondo") return;
+                if (
+                    modoRef.current !== "mondo"
+                ) {
+                    return;
+                }
 
-            await detenerPuerto();
+                await detenerPuerto();
 
-            if (modoRef.current === "mondo") {
-                await abrirPuerto(puerto);
-            }
-        }).catch((error: unknown) => {
-            solicitandoRef.current = false;
+                if (
+                    modoRef.current === "mondo"
+                ) {
+                    await abrirPuerto(puerto);
+                }
+            })
+            .catch((error: unknown) => {
+                solicitandoRef.current = false;
 
-            if (modoRef.current !== "mondo") return;
+                if (
+                    modoRef.current !== "mondo"
+                ) {
+                    return;
+                }
 
-            setEstadoMondo((anterior) => ({
-                ...anterior,
-                websocket: "error",
-                puerto: "desconectado",
+                setEstadoMondo((anterior) => ({
+                    ...anterior,
+                    websocket: "error",
+                    puerto: "desconectado",
 
-                detalle:
-                    error instanceof DOMException &&
-                    error.name === "NotFoundError"
-                        ? "Selección cancelada. Pulsa MONDO para elegir COM4."
-                        : "No se pudo seleccionar el puerto: " +
-                            mensajeError(error),
-            }));
-        });
+                    detalle:
+                        error instanceof DOMException &&
+                        error.name === "NotFoundError"
+                            ? "Selección cancelada. Pulsa MONDO para elegir COM4."
+                            : "No se pudo seleccionar el puerto: " +
+                                mensajeError(error),
+                }));
+            });
     }, [abrirPuerto, detenerPuerto]);
 
-    // ========================================
-    // CAMBIAR MODO
-    // ========================================
+    /* ========================================
+       CAMBIAR MODO DEL RELOJ
+       ======================================== */
 
     const cambiarModoReloj = useCallback((
         modo: ModoReloj,
@@ -856,12 +942,16 @@ export default function MarcadorProvider({
 
         establecerDatos((actual) => {
             const reloj =
-                actual.relojes[ID_RELOJ_PRINCIPAL];
+                actual.relojes[
+                    ID_RELOJ_PRINCIPAL
+                ];
 
             if (!reloj) return actual;
 
             const fuente: FuenteTiempo =
-                modo === "mondo" ? "mondo" : "manual";
+                modo === "mondo"
+                    ? "mondo"
+                    : "manual";
 
             const texto =
                 modo === "mondo"
@@ -872,8 +962,29 @@ export default function MarcadorProvider({
                             ? "10:00"
                             : reloj.texto;
 
+            const id =
+                actual.partidoPrincipalId;
+
+            const partido =
+                actual.partidos[id];
+
             return {
                 ...actual,
+
+                // Al cambiar de modo, se limpia
+                // la lectura anterior de MONDO.
+                // El decoder recibirá de nuevo AA.
+
+                partidos: partido
+                    ? {
+                        ...actual.partidos,
+
+                        [id]: {
+                            ...partido,
+                            periodoMondo: null,
+                        },
+                    }
+                    : actual.partidos,
 
                 relojes: {
                     ...actual.relojes,
@@ -882,6 +993,7 @@ export default function MarcadorProvider({
                         ...reloj,
                         fuente,
                         texto,
+
                         actualizadoEn:
                             modo === "mondo"
                                 ? null
@@ -892,7 +1004,9 @@ export default function MarcadorProvider({
         });
     }, [detenerPuerto]);
 
-    // ACTIVAR MONDO DESDE EL BOTÓN EXISTENTE
+    /* ========================================
+       ACTIVAR MONDO
+       ======================================== */
 
     const activarRelojMondo = useCallback((
         _relojId: string = ID_RELOJ_PRINCIPAL,
@@ -905,7 +1019,9 @@ export default function MarcadorProvider({
         seleccionarPuerto();
     }, [seleccionarPuerto]);
 
-    // SIMULACIÓN
+    /* ========================================
+       SIMULACIÓN
+       ======================================== */
 
     const reiniciarSimulacion = useCallback(() => {
         cambiarModoReloj("simulacion");
@@ -916,7 +1032,11 @@ export default function MarcadorProvider({
     }, [cambiarModoReloj]);
 
     useEffect(() => {
-        if (modoReloj !== "simulacion") return;
+        if (
+            modoReloj !== "simulacion"
+        ) {
+            return;
+        }
 
         const inicio = Date.now();
 
@@ -927,11 +1047,14 @@ export default function MarcadorProvider({
                     (Date.now() - inicio),
             );
 
-            const texto = tiempoSimulado(restante);
+            const texto =
+                tiempoSimulado(restante);
 
             establecerDatos((actual) => {
                 const reloj =
-                    actual.relojes[ID_RELOJ_PRINCIPAL];
+                    actual.relojes[
+                        ID_RELOJ_PRINCIPAL
+                    ];
 
                 if (
                     !reloj ||
@@ -964,18 +1087,23 @@ export default function MarcadorProvider({
 
         actualizar();
 
-        const intervalo = window.setInterval(() => {
-            if (actualizar() === 0) {
-                window.clearInterval(intervalo);
-            }
-        }, 100);
+        const intervalo =
+            window.setInterval(() => {
+                if (actualizar() === 0) {
+                    window.clearInterval(
+                        intervalo,
+                    );
+                }
+            }, 100);
 
-        return () => window.clearInterval(intervalo);
+        return () =>
+            window.clearInterval(intervalo);
+
     }, [modoReloj, reinicioSimulacion]);
 
-    // ========================================
-    // CONEXIÓN AUTOMÁTICA CON PERMISO PREVIO
-    // ========================================
+    /* ========================================
+       RECONEXIÓN CON PERMISO PREVIO
+       ======================================== */
 
     useEffect(() => {
         if (modoReloj !== "mondo") {
@@ -985,7 +1113,8 @@ export default function MarcadorProvider({
                 ...anterior,
                 websocket: "inactivo",
                 puerto: "desconocido",
-                detalle: "Web Serial desactivado.",
+                detalle:
+                    "Web Serial desactivado.",
             }));
 
             return;
@@ -1033,7 +1162,9 @@ export default function MarcadorProvider({
                 }
 
                 if (autorizados.length === 1) {
-                    await abrirPuerto(autorizados[0]);
+                    await abrirPuerto(
+                        autorizados[0],
+                    );
                 } else {
                     setEstadoMondo((anterior) => ({
                         ...anterior,
@@ -1062,17 +1193,24 @@ export default function MarcadorProvider({
 
         void recuperarPuerto();
 
-        const intervalo = window.setInterval(() => {
-            void recuperarPuerto();
-        }, 5000);
+        const intervalo =
+            window.setInterval(() => {
+                void recuperarPuerto();
+            }, 5000);
 
         return () => {
             activo = false;
-            window.clearInterval(intervalo);
+
+            window.clearInterval(
+                intervalo,
+            );
         };
+
     }, [modoReloj, abrirPuerto, detenerPuerto]);
 
-    // LIMPIEZA AL CERRAR LA PÁGINA
+    /* ========================================
+       LIMPIEZA AL CERRAR PÁGINA
+       ======================================== */
 
     useEffect(() => {
         return () => {
@@ -1080,11 +1218,14 @@ export default function MarcadorProvider({
         };
     }, [detenerPuerto]);
 
-    // CONTEXTO
+    /* ========================================
+       CONTEXTO
+       ======================================== */
 
     const contexto = useMemo<ContextoMarcador>(
         () => ({
             datos,
+            periodoMondo,
             establecerDatos,
 
             actualizarEquipo,
@@ -1102,6 +1243,7 @@ export default function MarcadorProvider({
         }),
         [
             datos,
+            periodoMondo,
             actualizarEquipo,
             actualizarPeriodo,
             actualizarCategoria,

@@ -7,6 +7,8 @@ import type {
 
 import { CATEGORIAS } from "../const/categorias";
 
+import { ID_RELOJ_PRINCIPAL } from "./datosIniciales";
+
 import Tiempo from "./piezas/Tiempo";
 import Puntos from "./piezas/Puntos";
 import NombreEquipo from "./piezas/NombreEquipo";
@@ -16,12 +18,17 @@ import Faltas from "./piezas/Faltas";
 import TiemposMuertos from "./piezas/TiemposMuertos";
 import ReproductorMultimedia from "./piezas/ReproductorMultimedia";
 
-
 /* ============================================
    MARCADOR CBA
-   Registro central de piezas
-   ============================================ */
+   REGISTRO CENTRAL DE PIEZAS
 
+   Período:
+   - Manual / simulación
+   - MONDO mediante Web Serial
+
+   El decoder interpreta COM4.
+   Este componente solo visualiza datos.
+   ============================================ */
 
 // 1. PIEZAS DISPONIBLES
 
@@ -39,14 +46,12 @@ export const PIEZAS_DISPONIBLES: {
     { tipo: "multimedia", nombre: "Reproductor multimedia" },
 ];
 
-
 // 2. PROPIEDADES
 
 interface RegistroPiezasProps {
     pieza: PiezaMarcador;
     datos: DatosMarcador;
 }
-
 
 // 3. COMPONENTE PRINCIPAL
 
@@ -55,41 +60,51 @@ export default function RegistroPiezas({
     datos,
 }: RegistroPiezasProps) {
 
-    // 4. DATOS VINCULADOS
+    // ========================================
+    // DATOS VINCULADOS
+    // ========================================
 
     const partidoId =
         pieza.vinculacion.partidoId ??
         datos.partidoPrincipalId;
 
-    const partido = datos.partidos[partidoId];
+    const partido =
+        datos.partidos[partidoId];
 
-    const lado = pieza.vinculacion.lado;
+    const lado =
+        pieza.vinculacion.lado;
 
     const equipo =
         partido && lado
             ? partido[lado]
             : null;
 
-    const relojId = pieza.vinculacion.relojId;
+    const relojId =
+        pieza.vinculacion.relojId;
 
     const reloj = relojId
         ? datos.relojes[relojId]
         : null;
 
-
-    // 5. CONFIGURACIÓN DE CATEGORÍA
+    // ========================================
+    // CONFIGURACIÓN DE CATEGORÍA
+    // ========================================
 
     const categoria = CATEGORIAS.find(
-        (cat) => cat.id === partido?.categoriaId,
+        (cat) =>
+            cat.id === partido?.categoriaId,
     );
 
     const cantidadPeriodos =
-        categoria?.reglamento.periodos.cantidad ?? null;
+        categoria?.reglamento.periodos.cantidad ??
+        null;
 
+    // ========================================
+    // PROPIEDADES GENERALES
+    // ========================================
 
-    // 6. PROPIEDADES GENERALES
-
-    const propiedades = pieza.propiedades ?? {};
+    const propiedades =
+        pieza.propiedades ?? {};
 
     const formatoPeriodo =
         propiedades.formato === "texto"
@@ -104,8 +119,11 @@ export default function RegistroPiezas({
                 : "indicadores";
 
     const cantidadIndicadores =
-        typeof propiedades.cantidadIndicadores === "number" &&
-        Number.isFinite(propiedades.cantidadIndicadores)
+        typeof propiedades.cantidadIndicadores ===
+            "number" &&
+        Number.isFinite(
+            propiedades.cantidadIndicadores,
+        )
             ? propiedades.cantidadIndicadores
             : undefined;
 
@@ -119,8 +137,83 @@ export default function RegistroPiezas({
             ? "cubrir"
             : "contener";
 
+    // ========================================
+    // PERÍODO MONDO
+    // ========================================
 
-    // 7. PROPIEDADES MULTIMEDIA
+    /*
+     * En la aplicación actual, el modo MONDO
+     * queda reflejado en la fuente del
+     * reloj principal.
+     *
+     * No es necesario volver a interpretar
+     * los bytes ni utilizar Web Serial aquí.
+     */
+
+    const fuenteRelojPrincipal =
+        datos.relojes[ID_RELOJ_PRINCIPAL]
+            ?.fuente;
+
+    const usarPeriodoMondo =
+        fuenteRelojPrincipal === "mondo";
+
+    /*
+     * Estado interpretado por
+     * DecodificadorMondo:
+     *
+     * quarter:
+     *     AA 51 - AA 59
+     *
+     * overtime:
+     *     AA 50
+     *
+     * empty:
+     *     AA 5F
+     */
+
+    const periodoMondo =
+        partido?.periodoMondo ?? null;
+
+    // ========================================
+    // CONFIGURACIÓN VISUAL DEL PERÍODO
+    // ========================================
+
+    /*
+     * Ejemplos:
+     *
+     * sufijoPeriodo = "Q"
+     *     1Q, 2Q, 3Q...
+     *
+     * textoExtra = "E"
+     *     Prórroga normal
+     *
+     * textoExtraFiba = "O"
+     *     Prórroga FIBA
+     *
+     * Estas opciones no modifican el decoder.
+     */
+
+    const sufijoPeriodo =
+        typeof propiedades.sufijoPeriodo === "string"
+            ? propiedades.sufijoPeriodo
+            : "";
+
+    const textoExtra =
+        typeof propiedades.textoExtra === "string"
+            ? propiedades.textoExtra
+            : "E";
+
+    const textoExtraFiba =
+        typeof propiedades.textoExtraFiba === "string"
+            ? propiedades.textoExtraFiba
+            : "O";
+
+    const modoFiba =
+        propiedades.modoFiba === true;
+
+    // ========================================
+    // PROPIEDADES MULTIMEDIA
+    // ========================================
 
     const multimediaSrc =
         typeof propiedades.src === "string"
@@ -144,13 +237,14 @@ export default function RegistroPiezas({
                 ? "estirar"
                 : "contener";
 
-
-    // 8. ÚNICO RETURN
+    // ========================================
+    // REPRESENTACIÓN DE PIEZAS
+    // ========================================
 
     return (
         <>
 
-            {/* TIEMPO */}
+            {/* RELOJ */}
 
             {pieza.tipo === "tiempo" && (
                 <Tiempo
@@ -158,7 +252,6 @@ export default function RegistroPiezas({
                     estilo={pieza.estilo}
                 />
             )}
-
 
             {/* PUNTOS */}
 
@@ -169,7 +262,6 @@ export default function RegistroPiezas({
                 />
             )}
 
-
             {/* NOMBRE DEL EQUIPO */}
 
             {pieza.tipo === "nombre-equipo" && equipo && (
@@ -178,7 +270,6 @@ export default function RegistroPiezas({
                     estilo={pieza.estilo}
                 />
             )}
-
 
             {/* ESCUDO DEL EQUIPO */}
 
@@ -191,20 +282,24 @@ export default function RegistroPiezas({
                 />
             )}
 
-
-            {/* PERIODO */}
+            {/* PERÍODO */}
 
             {pieza.tipo === "periodo" && partido && (
                 <Periodo
                     periodo={partido.periodo}
+                    periodoMondo={periodoMondo}
+                    usarPeriodoMondo={usarPeriodoMondo}
                     cantidadPeriodos={cantidadPeriodos}
                     formato={formatoPeriodo}
+                    sufijoPeriodo={sufijoPeriodo}
+                    textoExtra={textoExtra}
+                    textoExtraFiba={textoExtraFiba}
+                    modoFiba={modoFiba}
                     estilo={pieza.estilo}
                 />
             )}
 
-
-            {/* FALTAS DEL EQUIPO */}
+            {/* FALTAS */}
 
             {pieza.tipo === "faltas" && equipo && (
                 <Faltas
@@ -213,27 +308,31 @@ export default function RegistroPiezas({
                     formato={formatoIndicadores}
                     cantidadIndicadores={
                         cantidadIndicadores ??
-                        categoria?.reglamento.faltas.bonusEquipo ??
+                        categoria?.reglamento.faltas
+                            .bonusEquipo ??
                         5
                     }
                 />
             )}
 
-
             {/* TIEMPOS MUERTOS */}
 
-            {pieza.tipo === "tiempos-muertos" && equipo && (
-                <TiemposMuertos
-                    tiemposMuertos={equipo.tiemposMuertos}
-                    estilo={pieza.estilo}
-                    formato={formatoIndicadores}
-                    cantidadIndicadores={
-                        cantidadIndicadores ?? 3
-                    }
-                    representacion={representacionTiempos}
-                />
-            )}
-
+            {pieza.tipo === "tiempos-muertos" &&
+                equipo && (
+                    <TiemposMuertos
+                        tiemposMuertos={
+                            equipo.tiemposMuertos
+                        }
+                        estilo={pieza.estilo}
+                        formato={formatoIndicadores}
+                        cantidadIndicadores={
+                            cantidadIndicadores ?? 3
+                        }
+                        representacion={
+                            representacionTiempos
+                        }
+                    />
+                )}
 
             {/* REPRODUCTOR MULTIMEDIA */}
 

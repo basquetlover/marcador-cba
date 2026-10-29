@@ -1,38 +1,83 @@
 
 import type { EstiloPieza } from "../tipos";
+import type { PeriodoMondo } from "../DecodificadorMondo";
 
 /* ============================================
    MARCADOR CBA
-   Pieza visual: Periodo
+   PIEZA VISUAL: PERIODO
 
-   Admite:
-   - Periodo numérico manual
-   - Periodo recibido de MONDO
-   - Valores alfabéticos
+   Fuentes:
+   - Manual
+   - MONDO mediante COM4
+
+   El componente NO interpreta bytes.
+   Recibe el periodo ya decodificado.
    ============================================ */
 
 interface PeriodoProps {
+    // Periodo numérico/manual existente
     periodo: number | string;
+
     estilo: EstiloPieza;
 
     cantidadPeriodos?: number | null;
+
     formato?: "numero" | "texto";
+
+    // Estado original recibido desde MONDO
+    periodoMondo?: PeriodoMondo | null;
+
+    // Indica que MONDO tiene prioridad.
+    // Si todavía no ha llegado AA, muestra vacío.
+    usarPeriodoMondo?: boolean;
+
+    // Texto opcional detrás del número: "Q"
+    sufijoPeriodo?: string;
+
+    // Texto para tiempo extra
+    textoExtra?: string;
+
+    // Texto para tiempo extra FIBA
+    textoExtraFiba?: string;
+
+    modoFiba?: boolean;
 }
+
+/* ============================================
+   COMPONENTE PRINCIPAL
+   ============================================ */
 
 export default function Periodo({
     periodo,
     estilo,
+
     cantidadPeriodos = null,
     formato = "numero",
+
+    periodoMondo = null,
+    usarPeriodoMondo = false,
+
+    sufijoPeriodo = "",
+
+    textoExtra = "E",
+    textoExtraFiba = "O",
+
+    modoFiba = false,
 }: PeriodoProps) {
 
-    // CONFIGURACIÓN VISUAL
+    /* ========================================
+       ESTILO ORIGINAL
+       ======================================== */
 
-    const color = estilo.color ?? "#FFFFFF";
-    const fondo = estilo.fondo ?? "transparent";
+    const color =
+        estilo.color ?? "#FFFFFF";
+
+    const fondo =
+        estilo.fondo ?? "transparent";
 
     const fuente =
-        estilo.fuente ?? '"Bebas Neue", sans-serif';
+        estilo.fuente ??
+        '"Bebas Neue", sans-serif';
 
     const tamanoFuente =
         estilo.tamanoFuente ?? 80;
@@ -40,89 +85,158 @@ export default function Periodo({
     const alineacion =
         estilo.alineacion ?? "centro";
 
+    /* ========================================
+       TEXTO DEL PERIODO
+       ======================================== */
 
-    // VALOR ORIGINAL DEL PERÍODO
+    let textoPeriodo = "";
 
-    const valorOriginal =
-        typeof periodo === "string"
-            ? periodo.trim()
-            : Number.isFinite(periodo)
-                ? String(Math.trunc(periodo))
-                : "1";
+    let etiqueta = "Sin periodo";
 
+    if (usarPeriodoMondo) {
 
-    // DISTINGUIR NÚMEROS DE LETRAS
+        /* ====================================
+           FUENTE: MONDO
+           ==================================== */
 
-    const esNumerico = /^\d+$/.test(valorOriginal);
+        if (!periodoMondo) {
 
-    const periodoNumerico = esNumerico
-        ? Math.max(1, Number(valorOriginal))
-        : null;
+            // Todavía no hemos recibido AA.
+            // No inventar un período inicial.
 
+            textoPeriodo = "";
+            etiqueta = "Esperando periodo de MONDO";
 
-    // CONFIGURACIÓN DE PRÓRROGAS
+        } else if (
+            periodoMondo.type === "empty"
+        ) {
 
-    const limitePeriodos =
-        cantidadPeriodos !== null &&
-            Number.isFinite(cantidadPeriodos) &&
-            cantidadPeriodos > 0
-            ? Math.trunc(cantidadPeriodos)
-            : null;
+            // AA 5F
+            // MONDOVIDEO muestra un espacio
+            // en blanco, no el numero cero.
 
-    const esProrroga =
-        periodoNumerico !== null &&
-        limitePeriodos !== null &&
-        periodoNumerico > limitePeriodos;
+            textoPeriodo = "";
+            etiqueta = "Sin periodo";
 
-    const numeroProrroga =
-        esProrroga &&
-            periodoNumerico !== null &&
-            limitePeriodos !== null
-            ? periodoNumerico - limitePeriodos
-            : 0;
+        } else if (
+            periodoMondo.type === "overtime"
+        ) {
 
+            // AA 50
+            // La consola indica tiempo extra.
+            // React decide el texto que muestra.
 
-    // TEXTO QUE APARECE EN EL MARCADOR
+            textoPeriodo = modoFiba
+                ? textoExtraFiba
+                : textoExtra;
 
-    let textoPeriodo: string;
+            etiqueta = "Prorroga";
 
-    if (!esNumerico) {
+        } else if (
+            periodoMondo.type === "quarter" &&
+            periodoMondo.number !== null
+        ) {
 
-        // MONDO puede enviar una letra.
-        // Se muestra literalmente, sin convertirla
-        // a un período numérico ni a una prórroga.
+            // AA 51...59
+            // Se utiliza el numero del decoder.
+            // No se calcula desde el reloj.
 
-        textoPeriodo = valorOriginal || "-";
+            const numero =
+                periodoMondo.number;
 
-    } else if (esProrroga) {
+            textoPeriodo =
+                formato === "texto"
+                    ? `PERIODO ${numero}`
+                    : `${numero}${sufijoPeriodo}`;
 
-        textoPeriodo =
-            formato === "texto"
-                ? `PRÓRROGA ${numeroProrroga}`
-                : `PR${numeroProrroga}`;
+            etiqueta =
+                `Periodo ${numero}`;
+        }
 
     } else {
 
-        textoPeriodo =
-            formato === "texto"
-                ? `PERIODO ${periodoNumerico}`
-                : String(periodoNumerico);
+        /* ====================================
+           FUENTE: MANUAL
+           ==================================== */
+
+        const valorOriginal =
+            typeof periodo === "string"
+                ? periodo.trim()
+                : Number.isFinite(periodo)
+                    ? String(Math.trunc(periodo))
+                    : "";
+
+        const esNumerico =
+            /^\d+$/.test(valorOriginal);
+
+        if (!esNumerico) {
+
+            // Permitir texto manual.
+            textoPeriodo = valorOriginal;
+
+            etiqueta = valorOriginal
+                ? `Periodo ${valorOriginal}`
+                : "Sin periodo";
+
+        } else {
+
+            const numero = Math.max(
+                1,
+                Number(valorOriginal),
+            );
+
+            const limitePeriodos =
+                cantidadPeriodos !== null &&
+                Number.isFinite(cantidadPeriodos) &&
+                cantidadPeriodos > 0
+                    ? Math.trunc(cantidadPeriodos)
+                    : null;
+
+            const esProrroga =
+                limitePeriodos !== null &&
+                numero > limitePeriodos;
+
+            if (
+                esProrroga &&
+                limitePeriodos !== null
+            ) {
+
+                // Prórrogas controladas manualmente
+                const numeroProrroga =
+                    numero - limitePeriodos;
+
+                textoPeriodo =
+                    formato === "texto"
+                        ? `PRÓRROGA ${numeroProrroga}`
+                        : `PR${numeroProrroga}`;
+
+                etiqueta =
+                    `Prórroga ${numeroProrroga}`;
+
+            } else {
+
+                textoPeriodo =
+                    formato === "texto"
+                        ? `PERIODO ${numero}`
+                        : `${numero}${sufijoPeriodo}`;
+
+                etiqueta =
+                    `Periodo ${numero}`;
+            }
+        }
     }
 
-
-    // ETIQUETA ACCESIBLE
-
-    const etiqueta =
-        esProrroga
-            ? `Prórroga ${numeroProrroga}`
-            : `Periodo ${valorOriginal}`;
-
-
-    // REPRESENTACIÓN VISUAL
+    /* ========================================
+       VISUALIZACION
+       ======================================== */
 
     return (
         <div
-            className="flex h-full w-full min-h-0 min-w-0 overflow-hidden"
+            className="
+                flex h-full w-full
+                min-h-0 min-w-0
+                overflow-hidden
+            "
             style={{
                 alignItems: "center",
 
@@ -134,20 +248,30 @@ export default function Periodo({
                             : "center",
 
                 backgroundColor: fondo,
+
                 color,
 
                 fontFamily: fuente,
+
                 fontSize: `${tamanoFuente}px`,
 
-                fontVariantNumeric: "tabular-nums",
+                fontVariantNumeric:
+                    "tabular-nums",
+
                 fontWeight: 500,
+
                 lineHeight: 1,
+
                 boxSizing: "border-box",
             }}
             aria-label={etiqueta}
         >
             <span
-                className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap"
+                className="
+                    block min-w-0 max-w-full
+                    overflow-hidden
+                    text-ellipsis whitespace-nowrap
+                "
                 style={{
                     textAlign:
                         alineacion === "izquierda"

@@ -1,48 +1,68 @@
 
 import { useContext, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
+
 import type { DisenoMarcador } from "../marcador/tipos";
 import type { ModoReloj } from "../marcador/MarcadorProvider";
 
 import usePageTitle from "../lib/usePageTitle";
 import { DISENOS } from "../const/disenos";
 import { CATEGORIAS } from "../const/categorias";
+
 import {
     cargarDisenoSeleccionado,
     guardarDisenoSeleccionado,
 } from "../lib/disenoStorage";
-import { obtenerOCrearIdVinculacion } from "../lib/vinculacionCookie";
-// import { obtenerCalendarioConfiguradoFBIB } from "../lib/fbib";
-// import { obtenerEquiposClubFBIB } from "../lib/fbib/clubes";
+
+import {
+    obtenerOCrearIdVinculacion,
+} from "../lib/vinculacionCookie";
+
 import QrVinculacion from "../components/QrVinculacion";
 import VisorMarcador from "../marcador/VisorMarcador";
+
 import {
     DISENO_PROYECTO_SIMPLE,
     DISENOS_PROYECTO_POR_ID,
 } from "../marcador/disenosProyecto";
-import { MarcadorContext } from "../marcador/MarcadorProvider";
-import { ID_RELOJ_PRINCIPAL } from "../marcador/datosIniciales";
+
+import {
+    MarcadorContext,
+} from "../marcador/MarcadorProvider";
+
+import {
+    ID_RELOJ_PRINCIPAL,
+} from "../marcador/datosIniciales";
 
 /* ============================================
    MARCADOR CBA - PANEL DE CONTROL
-   Proyección fija 832 x 520 (izquierda)
-   Controles (derecha)
+
+   Proyección: 832 x 520, izquierda
+   Controles: derecha
+
+   MONDO:
+   COM4 -> Web Serial -> Decoder -> React
+   Sin Node.js ni WebSocket.
    ============================================ */
 
 const MULTIMEDIA_PROYECTO = import.meta.glob<string>(
     "/src/assets/multimedia/**/*.{png,jpg,jpeg,webp,gif,svg,mp4,webm,ogg,ogv}",
-    { eager: true, query: "?url", import: "default" },
+    {
+        eager: true,
+        query: "?url",
+        import: "default",
+    },
 );
 
-const ARCHIVOS_PROYECTO = Object.entries(MULTIMEDIA_PROYECTO).map(
-    ([ruta, url]) => ({
-        nombre: ruta.split("/").pop() ?? ruta,
-        url,
-        tipo: /\.(mp4|webm|ogg|ogv)$/i.test(ruta)
-            ? "video" as const
-            : "imagen" as const,
-    }),
-);
+const ARCHIVOS_PROYECTO = Object.entries(
+    MULTIMEDIA_PROYECTO,
+).map(([ruta, url]) => ({
+    nombre: ruta.split("/").pop() ?? ruta,
+    url,
+    tipo: /\.(mp4|webm|ogg|ogv)$/i.test(ruta)
+        ? "video" as const
+        : "imagen" as const,
+}));
 
 const OPCIONES_RELOJ: {
     id: ModoReloj;
@@ -57,7 +77,7 @@ const OPCIONES_RELOJ: {
     {
         id: "mondo",
         nombre: "MONDO",
-        descripcion: "Leer COM4 desde el servidor local",
+        descripcion: "Leer COM4 mediante Web Serial",
     },
     {
         id: "simulacion",
@@ -66,16 +86,23 @@ const OPCIONES_RELOJ: {
     },
 ];
 
-function validarTiempoManual(texto: string): string | null {
+function validarTiempoManual(
+    texto: string,
+): string | null {
     const valor = texto.trim();
 
-    const normal = /^(\d{1,2}):([0-5]\d)$/.exec(valor);
+    const normal =
+        /^(\d{1,2}):([0-5]\d)$/.exec(valor);
 
     if (normal) {
-        return `${normal[1].padStart(2, "0")}:${normal[2]}`;
+        return (
+            `${normal[1].padStart(2, "0")}:` +
+            normal[2]
+        );
     }
 
-    const ultimoMinuto = /^([0-5]\d)\.([0-9])$/.exec(valor);
+    const ultimoMinuto =
+        /^([0-5]\d)\.([0-9])$/.exec(valor);
 
     if (ultimoMinuto) {
         return valor;
@@ -84,10 +111,15 @@ function validarTiempoManual(texto: string): string | null {
     return null;
 }
 
+/* ============================================
+   COMPONENTE PRINCIPAL
+   ============================================ */
+
 export default function Control() {
     usePageTitle("Control Marcador");
 
-    const marcador = useContext(MarcadorContext);
+    const marcador =
+        useContext(MarcadorContext);
 
     if (!marcador) {
         throw new Error(
@@ -105,66 +137,103 @@ export default function Control() {
         modoReloj,
         cambiarModoReloj,
         reiniciarSimulacion,
+
         estadoMondo,
         reconectarMondo,
         activarRelojMondo,
     } = marcador;
 
-    const partido = datos.partidos[datos.partidoPrincipalId];
-    const reloj = datos.relojes[ID_RELOJ_PRINCIPAL];
+    const partido =
+        datos.partidos[datos.partidoPrincipalId];
 
-    // DISEÑOS
+    const reloj =
+        datos.relojes[ID_RELOJ_PRINCIPAL];
 
-    const [selectedDiseno, setSelectedDiseno] = useState<string>(() => {
-        const guardado = cargarDisenoSeleccionado();
+    /* ========================================
+       DISEÑOS
+       ======================================== */
 
-        return guardado && DISENOS_PROYECTO_POR_ID[guardado]
+    const [
+        selectedDiseno,
+        setSelectedDiseno,
+    ] = useState<string>(() => {
+        const guardado =
+            cargarDisenoSeleccionado();
+
+        return (
+            guardado &&
+            DISENOS_PROYECTO_POR_ID[guardado]
+        )
             ? guardado
             : DISENO_PROYECTO_SIMPLE.id;
     });
 
-    const [disenosEditados, setDisenosEditados] =
-        useState<Record<string, DisenoMarcador>>({});
+    const [
+        disenosEditados,
+        setDisenosEditados,
+    ] = useState<Record<string, DisenoMarcador>>({});
 
     const disenoActivo =
         disenosEditados[selectedDiseno] ??
         DISENOS_PROYECTO_POR_ID[selectedDiseno] ??
         DISENO_PROYECTO_SIMPLE;
 
-    // MULTIMEDIA
+    /* ========================================
+       MULTIMEDIA
+       ======================================== */
 
-    const inputArchivoRef = useRef<HTMLInputElement>(null);
-    const urlsLocalesRef = useRef<Record<string, string>>({});
+    const inputArchivoRef =
+        useRef<HTMLInputElement>(null);
 
-    const [rutaProyecto, setRutaProyecto] = useState("");
-    const [errorMultimedia, setErrorMultimedia] =
-        useState<string | null>(null);
+    const urlsLocalesRef =
+        useRef<Record<string, string>>({});
 
-    const [errorPantalla, setErrorPantalla] =
-        useState<string | null>(null);
+    const [
+        rutaProyecto,
+        setRutaProyecto,
+    ] = useState("");
 
-    const [errorReloj, setErrorReloj] =
-        useState<string | null>(null);
+    const [
+        errorMultimedia,
+        setErrorMultimedia,
+    ] = useState<string | null>(null);
 
-    const [relojManual, setRelojManual] = useState("10:00");
+    const [
+        errorPantalla,
+        setErrorPantalla,
+    ] = useState<string | null>(null);
 
-    // ESTADOS GENERALES
+    const [
+        errorReloj,
+        setErrorReloj,
+    ] = useState<string | null>(null);
 
-    const [qrAbierto, setQrAbierto] = useState(false);
+    const [
+        relojManual,
+        setRelojManual,
+    ] = useState("10:00");
+
+    /* ========================================
+       ESTADOS GENERALES
+       ======================================== */
+
+    const [
+        qrAbierto,
+        setQrAbierto,
+    ] = useState(false);
 
     const [vinculacionId] = useState(
         obtenerOCrearIdVinculacion,
     );
 
-    // const [estadoFBIB, setEstadoFBIB] = useState<
-    //     "consultando" | "disponible" | "error"
-    // >("consultando");
+    const piezaMultimedia =
+        disenoActivo.capas.find(
+            (pieza) =>
+                pieza.tipo === "multimedia",
+        );
 
-    const piezaMultimedia = disenoActivo.capas.find(
-        (pieza) => pieza.tipo === "multimedia",
-    );
-
-    const propiedadesMultimedia = piezaMultimedia?.propiedades ?? {};
+    const propiedadesMultimedia =
+        piezaMultimedia?.propiedades ?? {};
 
     const bucleMultimedia =
         propiedadesMultimedia.bucle !== false;
@@ -181,56 +250,161 @@ export default function Control() {
                 ? "imagen"
                 : "auto";
 
-    // CATEGORÍA
+    /* ========================================
+       CATEGORÍA Y REGLAMENTO
+       ======================================== */
 
-    const categoriaSeleccionada = CATEGORIAS.find(
-        (categoria) => categoria.id === partido?.categoriaId,
-    );
+    const categoriaSeleccionada =
+        CATEGORIAS.find(
+            (categoria) =>
+                categoria.id === partido?.categoriaId,
+        );
 
-    const reglas = categoriaSeleccionada?.reglamento;
+    const reglas =
+        categoriaSeleccionada?.reglamento;
 
-    // CONSULTAS FBIB
+    /* ========================================
+       PERÍODO MONDO
+       ======================================== */
 
-    // useEffect(() => {
-    //     let activo = true;
-    //     const mes = new Date().getMonth();
+    // Este estado ya llega interpretado.
+    // No decodificamos bytes en este componente.
 
-    //     Promise.allSettled([
-    //         obtenerCalendarioConfiguradoFBIB(mes),
-    //         obtenerEquiposClubFBIB(),
-    //     ]).then((resultados) => {
-    //         if (!activo) return;
+    const periodoMondo =
+        partido?.periodoMondo ?? null;
 
-    //         setEstadoFBIB(
-    //             resultados.every(
-    //                 (resultado) => resultado.status === "fulfilled",
-    //             )
-    //                 ? "disponible"
-    //                 : "error",
-    //         );
-    //     });
+    const usarPeriodoMondo =
+        modoReloj === "mondo";
 
-    //     return () => {
-    //         activo = false;
-    //     };
-    // }, []);
+    // Propiedades visuales del diseño activo.
+    // El texto mostrado en el panel coincidirá
+    // con el configurado para el marcador.
 
-    // // LIBERAR ARCHIVOS TEMPORALES AL DESMONTAR
+    const piezaPeriodo =
+        disenoActivo.capas.find(
+            (pieza) => pieza.tipo === "periodo",
+        );
 
-    // useEffect(() => {
-    //     const urlsLocales = urlsLocalesRef.current;
+    const propiedadesPeriodo =
+        piezaPeriodo?.propiedades ?? {};
 
-    //     return () => {
-    //         Object.values(urlsLocales).forEach(
-    //             (url) => URL.revokeObjectURL(url),
-    //         );
-    //     };
-    // }, []);
+    const sufijoPeriodo =
+        typeof propiedadesPeriodo.sufijoPeriodo ===
+            "string"
+            ? propiedadesPeriodo.sufijoPeriodo
+            : "";
 
-    // ACTUALIZAR MULTIMEDIA
+    const textoExtra =
+        typeof propiedadesPeriodo.textoExtra ===
+            "string"
+            ? propiedadesPeriodo.textoExtra
+            : "E";
+
+    const textoExtraFiba =
+        typeof propiedadesPeriodo.textoExtraFiba ===
+            "string"
+            ? propiedadesPeriodo.textoExtraFiba
+            : "O";
+
+    const modoFiba =
+        propiedadesPeriodo.modoFiba === true;
+
+    const formatoPeriodo =
+        propiedadesPeriodo.formato === "texto"
+            ? "texto"
+            : "numero";
+
+    const numeroPeriodoManual =
+        partido?.periodo ?? 1;
+
+    const cantidadPeriodos =
+        reglas?.periodos.cantidad ?? null;
+
+    // Texto predeterminado del panel.
+    // En MONDO no se inventa un período si
+    // aún no se ha recibido ninguna trama AA.
+
+    let textoPeriodoPanel = "—";
+    let detallePeriodo = "";
+
+    if (usarPeriodoMondo) {
+        if (!periodoMondo) {
+            textoPeriodoPanel = "—";
+            detallePeriodo =
+                "Esperando trama de período AA desde COM4.";
+        } else if (
+            periodoMondo.type === "empty"
+        ) {
+            textoPeriodoPanel = "—";
+            detallePeriodo =
+                "Período vacío: AA 5F. " +
+                "La proyección no muestra texto.";
+        } else if (
+            periodoMondo.type === "overtime"
+        ) {
+            textoPeriodoPanel = modoFiba
+                ? textoExtraFiba
+                : textoExtra;
+
+            detallePeriodo =
+                "Prórroga recibida: AA 50.";
+        } else if (
+            periodoMondo.type === "quarter" &&
+            periodoMondo.number !== null
+        ) {
+            const numero = periodoMondo.number;
+
+            textoPeriodoPanel =
+                formatoPeriodo === "texto"
+                    ? `PERIODO ${numero}`
+                    : `${numero}${sufijoPeriodo}`;
+
+            detallePeriodo =
+                "Período recibido: AA " +
+                periodoMondo.raw
+                    .toString(16)
+                    .toUpperCase()
+                    .padStart(2, "0") +
+                ".";
+        }
+    } else {
+        const esProrrogaManual =
+            cantidadPeriodos !== null &&
+            numeroPeriodoManual > cantidadPeriodos;
+
+        if (
+            esProrrogaManual &&
+            cantidadPeriodos !== null
+        ) {
+            const numeroProrroga =
+                numeroPeriodoManual - cantidadPeriodos;
+
+            textoPeriodoPanel =
+                formatoPeriodo === "texto"
+                    ? `PRÓRROGA ${numeroProrroga}`
+                    : `PR${numeroProrroga}`;
+        } else {
+            textoPeriodoPanel =
+                formatoPeriodo === "texto"
+                    ? `PERIODO ${numeroPeriodoManual}`
+                    : `${numeroPeriodoManual}${sufijoPeriodo}`;
+        }
+
+        detallePeriodo =
+            modoReloj === "simulacion"
+                ? "Período manual; el reloj está simulado."
+                : "Período controlado manualmente.";
+    }
+
+    /* ========================================
+       ACTUALIZAR MULTIMEDIA
+       ======================================== */
 
     function actualizarMultimedia(
-        cambios: Record<string, string | number | boolean | null>,
+        cambios: Record<
+            string,
+            string | number | boolean | null
+        >,
     ) {
         setDisenosEditados((actuales) => {
             const base =
@@ -244,17 +418,18 @@ export default function Control() {
                 [selectedDiseno]: {
                     ...base,
 
-                    capas: base.capas.map((pieza) =>
-                        pieza.tipo === "multimedia"
-                            ? {
-                                ...pieza,
+                    capas: base.capas.map(
+                        (pieza) =>
+                            pieza.tipo === "multimedia"
+                                ? {
+                                    ...pieza,
 
-                                propiedades: {
-                                    ...pieza.propiedades,
-                                    ...cambios,
-                                },
-                            }
-                            : pieza,
+                                    propiedades: {
+                                        ...pieza.propiedades,
+                                        ...cambios,
+                                    },
+                                }
+                                : pieza,
                     ),
                 },
             };
@@ -262,23 +437,31 @@ export default function Control() {
     }
 
     function liberarArchivoLocal() {
-        const anterior = urlsLocalesRef.current[selectedDiseno];
+        const anterior =
+            urlsLocalesRef.current[selectedDiseno];
 
         if (anterior) {
             URL.revokeObjectURL(anterior);
-            delete urlsLocalesRef.current[selectedDiseno];
+
+            delete urlsLocalesRef.current[
+                selectedDiseno
+            ];
         }
     }
 
     function seleccionarArchivoPC(
         evento: ChangeEvent<HTMLInputElement>,
     ) {
-        const archivo = evento.target.files?.[0];
+        const archivo =
+            evento.target.files?.[0];
 
         if (!archivo) return;
 
-        const esVideo = archivo.type.startsWith("video/");
-        const esImagen = archivo.type.startsWith("image/");
+        const esVideo =
+            archivo.type.startsWith("video/");
+
+        const esImagen =
+            archivo.type.startsWith("image/");
 
         if (!esVideo && !esImagen) {
             setErrorMultimedia(
@@ -291,16 +474,21 @@ export default function Control() {
 
         liberarArchivoLocal();
 
-        const url = URL.createObjectURL(archivo);
+        const url =
+            URL.createObjectURL(archivo);
 
-        urlsLocalesRef.current[selectedDiseno] = url;
+        urlsLocalesRef.current[
+            selectedDiseno
+        ] = url;
 
         actualizarMultimedia({
             src: url,
-            tipoArchivo: esVideo ? "video" : "imagen",
+            tipoArchivo:
+                esVideo ? "video" : "imagen",
         });
 
         setErrorMultimedia(null);
+
         evento.target.value = "";
     }
 
@@ -318,10 +506,13 @@ export default function Control() {
         setErrorMultimedia(null);
     }
 
-    // RELOJ MANUAL
+    /* ========================================
+       RELOJ MANUAL
+       ======================================== */
 
     function aplicarTiempoManual() {
-        const valor = validarTiempoManual(relojManual);
+        const valor =
+            validarTiempoManual(relojManual);
 
         if (!valor) {
             setErrorReloj(
@@ -341,9 +532,13 @@ export default function Control() {
         );
     }
 
-    // SELECCIONAR FUENTE DEL RELOJ
+    /* ========================================
+       SELECCIONAR FUENTE DEL RELOJ
+       ======================================== */
 
-    function seleccionarModo(modo: ModoReloj) {
+    function seleccionarModo(
+        modo: ModoReloj,
+    ) {
         setErrorReloj(null);
 
         if (modo === "mondo") {
@@ -355,7 +550,13 @@ export default function Control() {
         }
     }
 
-    // ESTADO VISUAL MONDO
+    /* ========================================
+       ESTADO DE WEB SERIAL
+       ======================================== */
+
+    // El campo websocket se conserva desde
+    // MarcadorProvider por compatibilidad.
+    // No hay ninguna conexión WebSocket real.
 
     const mondoConectado =
         estadoMondo.websocket === "conectado" &&
@@ -365,16 +566,21 @@ export default function Control() {
         modoReloj !== "mondo"
             ? "Desactivado"
             : mondoConectado
-                ? "COM4 conectado"
-                : estadoMondo.websocket === "conectando"
+                ? "Puerto serie conectado"
+                : estadoMondo.puerto === "conectando"
                     ? "Conectando..."
-                    : estadoMondo.websocket === "conectado"
-                        ? "Servidor activo · COM4 sin conexión"
+                    : estadoMondo.websocket === "error"
+                        ? "Error de conexión"
                         : "Sin conexión";
+
+    /* ========================================
+       INTERFAZ
+       ======================================== */
 
     return (
         <>
-            {/* OCULTAR BOTONES DEL VISOR FUERA DE LA CAPTURA */}
+            {/* OCULTAR BOTONES DEL VISOR
+                FUERA DE LA CAPTURA */}
 
             <style>
                 {`
@@ -385,10 +591,10 @@ export default function Control() {
                 `}
             </style>
 
-            {/* ====================================
+            {/* =================================
                 COLUMNA IZQUIERDA
                 MARCADOR 832 x 520
-                ==================================== */}
+                ================================= */}
 
             <div id="visor-proyeccion">
                 <VisorMarcador
@@ -397,19 +603,27 @@ export default function Control() {
                 />
             </div>
 
-            {/* ====================================
+            {/* =================================
                 COLUMNA DERECHA
                 CONTROLES
-                ==================================== */}
+                ================================= */}
 
             <main
-                className="min-h-dvh bg-brand-blue-deep text-white"
+                className="
+                    min-h-dvh
+                    bg-brand-blue-deep text-white
+                "
                 style={{
                     marginLeft: 832,
                     minWidth: 380,
                 }}
             >
-                <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 p-5">
+                <div
+                    className="
+                        mx-auto flex w-full max-w-5xl
+                        flex-col gap-5 p-5
+                    "
+                >
 
                     {/* CABECERA */}
 
@@ -437,7 +651,9 @@ export default function Control() {
                             setErrorPantalla(null);
 
                             const visor =
-                                document.querySelector<HTMLDivElement>(
+                                document.querySelector<
+                                    HTMLDivElement
+                                >(
                                     '#visor-proyeccion [aria-label^="Proyección del marcador:"]',
                                 );
 
@@ -448,26 +664,35 @@ export default function Control() {
                                 return;
                             }
 
-                            void visor.requestFullscreen().catch(() => {
-                                setErrorPantalla(
-                                    "No se pudo activar la pantalla completa.",
-                                );
-                            });
+                            void visor.requestFullscreen()
+                                .catch(() => {
+                                    setErrorPantalla(
+                                        "No se pudo activar la pantalla completa.",
+                                    );
+                                });
                         }}
-                        className="min-h-12 cursor-pointer rounded-xl bg-primary px-5 py-3 font-bold text-brand-blue-deep hover:bg-brand-yellow-bright"
+                        className="
+                            min-h-12 cursor-pointer rounded-xl
+                            bg-primary px-5 py-3 font-bold
+                            text-brand-blue-deep
+                            hover:bg-brand-yellow-bright
+                        "
                     >
                         Pantalla completa
                     </button>
 
                     {errorPantalla && (
-                        <p role="alert" className="text-sm text-red-300">
+                        <p
+                            role="alert"
+                            className="text-sm text-red-300"
+                        >
                             {errorPantalla}
                         </p>
                     )}
 
-                    {/* ====================================
-                        RELOJ MANUAL / MONDO / SIMULACIÓN
-                        ==================================== */}
+                    {/* =========================
+                        RELOJ
+                        ========================= */}
 
                     <section className="rounded-2xl bg-brand-blue-dark p-5">
                         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -477,7 +702,8 @@ export default function Control() {
 
                             <span
                                 className={`rounded-full px-3 py-1 text-xs font-bold ${
-                                    modoReloj === "mondo" && mondoConectado
+                                    modoReloj === "mondo" &&
+                                    mondoConectado
                                         ? "bg-emerald-500/20 text-emerald-300"
                                         : modoReloj === "mondo"
                                             ? "bg-amber-500/20 text-amber-200"
@@ -495,33 +721,41 @@ export default function Control() {
                         {/* SELECTOR DE MODO */}
 
                         <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                            {OPCIONES_RELOJ.map((opcion) => (
-                                <button
-                                    key={opcion.id}
-                                    type="button"
-                                    onClick={() => seleccionarModo(opcion.id)}
-                                    aria-pressed={modoReloj === opcion.id}
-                                    className={`min-h-16 cursor-pointer rounded-xl border-2 p-3 text-left transition-colors ${
-                                        modoReloj === opcion.id
-                                            ? "border-primary bg-brand-blue-deep"
-                                            : "border-white/15 bg-brand-blue-deep/40 hover:border-white/50"
-                                    }`}
-                                >
-                                    <span
-                                        className={`block text-sm font-bold ${
+                            {OPCIONES_RELOJ.map(
+                                (opcion) => (
+                                    <button
+                                        key={opcion.id}
+                                        type="button"
+                                        onClick={() =>
+                                            seleccionarModo(
+                                                opcion.id,
+                                            )
+                                        }
+                                        aria-pressed={
                                             modoReloj === opcion.id
-                                                ? "text-primary"
-                                                : "text-white"
+                                        }
+                                        className={`min-h-16 cursor-pointer rounded-xl border-2 p-3 text-left transition-colors ${
+                                            modoReloj === opcion.id
+                                                ? "border-primary bg-brand-blue-deep"
+                                                : "border-white/15 bg-brand-blue-deep/40 hover:border-white/50"
                                         }`}
                                     >
-                                        {opcion.nombre}
-                                    </span>
+                                        <span
+                                            className={`block text-sm font-bold ${
+                                                modoReloj === opcion.id
+                                                    ? "text-primary"
+                                                    : "text-white"
+                                            }`}
+                                        >
+                                            {opcion.nombre}
+                                        </span>
 
-                                    <span className="mt-1 block text-xs text-white/60">
-                                        {opcion.descripcion}
-                                    </span>
-                                </button>
-                            ))}
+                                        <span className="mt-1 block text-xs text-white/60">
+                                            {opcion.descripcion}
+                                        </span>
+                                    </button>
+                                ),
+                            )}
                         </div>
 
                         {/* TIEMPO ACTUAL */}
@@ -572,7 +806,9 @@ export default function Control() {
                                         Última recepción:{" "}
                                         {new Date(
                                             estadoMondo.ultimaLecturaEn,
-                                        ).toLocaleTimeString("es-ES")}
+                                        ).toLocaleTimeString(
+                                            "es-ES",
+                                        )}
                                     </p>
                                 )}
 
@@ -581,12 +817,14 @@ export default function Control() {
                                     onClick={reconectarMondo}
                                     className="mt-3 min-h-11 w-full cursor-pointer rounded-lg bg-primary px-4 py-2 font-bold text-brand-blue-deep hover:bg-brand-yellow-bright"
                                 >
-                                    Reconectar al servidor MONDO
+                                    Reconectar COM4
                                 </button>
 
                                 <p className="mt-2 text-xs text-white/50">
-                                    Este botón reconecta React. No inicia
-                                    programas de Windows ni abre COM4 por sí mismo.
+                                    Web Serial abre el selector de
+                                    puertos del navegador. Selecciona
+                                    COM4 si se solicita autorización.
+                                    No se inicia ningún servidor local.
                                 </p>
                             </div>
                         )}
@@ -629,15 +867,21 @@ export default function Control() {
                                         inputMode="text"
                                         value={relojManual}
                                         onChange={(evento) =>
-                                            setRelojManual(evento.target.value)
+                                            setRelojManual(
+                                                evento.target.value,
+                                            )
                                         }
                                         onKeyDown={(evento) => {
-                                            if (evento.key === "Enter") {
+                                            if (
+                                                evento.key === "Enter"
+                                            ) {
                                                 aplicarTiempoManual();
                                             }
                                         }}
                                         placeholder="08:34 o 59.3"
-                                        aria-invalid={Boolean(errorReloj)}
+                                        aria-invalid={
+                                            Boolean(errorReloj)
+                                        }
                                         className="min-w-0 flex-1 rounded-lg border border-white/15 bg-brand-blue-dark px-3 py-2 text-white focus:border-primary focus:outline-none"
                                     />
 
@@ -666,9 +910,9 @@ export default function Control() {
                         )}
                     </section>
 
-                    {/* ====================================
+                    {/* =========================
                         MULTIMEDIA
-                        ==================================== */}
+                        ========================= */}
 
                     <section className="rounded-2xl bg-brand-blue-dark p-5">
                         <h2 className="text-xl font-bold uppercase text-primary">
@@ -686,7 +930,9 @@ export default function Control() {
 
                             <p className="mt-1 break-all text-sm">
                                 {fuenteMultimedia
-                                    ? fuenteMultimedia.startsWith("blob:")
+                                    ? fuenteMultimedia.startsWith(
+                                        "blob:",
+                                    )
                                         ? "Archivo seleccionado del PC"
                                         : fuenteMultimedia
                                     : "Diseño predeterminado CBA"}
@@ -704,7 +950,9 @@ export default function Control() {
                         <button
                             type="button"
                             disabled={!piezaMultimedia}
-                            onClick={() => inputArchivoRef.current?.click()}
+                            onClick={() =>
+                                inputArchivoRef.current?.click()
+                            }
                             className="mt-4 min-h-11 w-full cursor-pointer rounded-lg bg-primary px-4 py-2 font-bold text-brand-blue-deep hover:bg-brand-yellow-bright disabled:opacity-50"
                         >
                             Seleccionar imagen o vídeo del PC
@@ -727,9 +975,12 @@ export default function Control() {
                                 ARCHIVOS_PROYECTO.length === 0
                             }
                             onChange={(evento) => {
-                                const archivo = ARCHIVOS_PROYECTO.find(
-                                    (item) => item.url === evento.target.value,
-                                );
+                                const archivo =
+                                    ARCHIVOS_PROYECTO.find(
+                                        (item) =>
+                                            item.url ===
+                                            evento.target.value,
+                                    );
 
                                 if (archivo) {
                                     seleccionarArchivoProyecto(
@@ -746,14 +997,16 @@ export default function Control() {
                                     : "No hay archivos empaquetados"}
                             </option>
 
-                            {ARCHIVOS_PROYECTO.map((archivo) => (
-                                <option
-                                    key={archivo.url}
-                                    value={archivo.url}
-                                >
-                                    {archivo.nombre}
-                                </option>
-                            ))}
+                            {ARCHIVOS_PROYECTO.map(
+                                (archivo) => (
+                                    <option
+                                        key={archivo.url}
+                                        value={archivo.url}
+                                    >
+                                        {archivo.nombre}
+                                    </option>
+                                ),
+                            )}
                         </select>
 
                         {/* RUTA MANUAL */}
@@ -771,7 +1024,9 @@ export default function Control() {
                                 type="text"
                                 value={rutaProyecto}
                                 onChange={(evento) =>
-                                    setRutaProyecto(evento.target.value)
+                                    setRutaProyecto(
+                                        evento.target.value,
+                                    )
                                 }
                                 placeholder="/marcador/publicidad.mp4"
                                 className="min-w-0 flex-1 rounded-lg border border-white/20 bg-brand-blue-deep px-3 py-2 text-sm text-white focus:border-primary focus:outline-none"
@@ -781,7 +1036,8 @@ export default function Control() {
                                 type="button"
                                 disabled={!piezaMultimedia}
                                 onClick={() => {
-                                    const ruta = rutaProyecto.trim();
+                                    const ruta =
+                                        rutaProyecto.trim();
 
                                     if (
                                         !ruta.startsWith("/") ||
@@ -793,12 +1049,15 @@ export default function Control() {
                                         setErrorMultimedia(
                                             "Introduce una ruta local válida del proyecto.",
                                         );
+
                                         return;
                                     }
 
                                     seleccionarArchivoProyecto(
                                         ruta,
-                                        /\.(mp4|webm|ogg|ogv)$/i.test(ruta)
+                                        /\.(mp4|webm|ogg|ogv)$/i.test(
+                                            ruta,
+                                        )
                                             ? "video"
                                             : "imagen",
                                     );
@@ -810,8 +1069,8 @@ export default function Control() {
                         </div>
 
                         <p className="mt-2 text-xs text-white/50">
-                            Puedes utilizar archivos de public con rutas
-                            como /marcador/publicidad.mp4.
+                            Puedes utilizar archivos de public
+                            con rutas como /marcador/publicidad.mp4.
                         </p>
 
                         {/* BUCLE */}
@@ -833,7 +1092,8 @@ export default function Control() {
                                 disabled={!piezaMultimedia}
                                 onChange={(evento) =>
                                     actualizarMultimedia({
-                                        bucle: evento.target.checked,
+                                        bucle:
+                                            evento.target.checked,
                                     })
                                 }
                                 className="size-5 cursor-pointer accent-yellow-400"
@@ -877,9 +1137,9 @@ export default function Control() {
                         </p>
                     </section>
 
-                    {/* ====================================
+                    {/* =========================
                         CONTROL DEL PARTIDO
-                        ==================================== */}
+                        ========================= */}
 
                     <section className="rounded-2xl bg-brand-blue-dark p-5">
                         <h2 className="text-xl font-bold uppercase text-primary">
@@ -900,11 +1160,13 @@ export default function Control() {
                                         </h3>
 
                                         <p className="mt-1 truncate text-center text-xs text-white/60">
-                                            {partido?.[lado].nombre ?? "-"}
+                                            {partido?.[lado].nombre ??
+                                                "-"}
                                         </p>
 
                                         <p className="bebas-neue mt-3 text-center text-6xl text-primary">
-                                            {partido?.[lado].puntos ?? 0}
+                                            {partido?.[lado].puntos ??
+                                                0}
                                         </p>
 
                                         {/* PUNTOS */}
@@ -917,16 +1179,20 @@ export default function Control() {
                                                         type="button"
                                                         disabled={!partido}
                                                         onClick={() => {
-                                                            if (!partido) return;
+                                                            if (!partido) {
+                                                                return;
+                                                            }
 
                                                             actualizarEquipo(
                                                                 lado,
                                                                 {
-                                                                    puntos: Math.max(
-                                                                        0,
-                                                                        partido[lado].puntos +
-                                                                            incremento,
-                                                                    ),
+                                                                    puntos:
+                                                                        Math.max(
+                                                                            0,
+                                                                            partido[lado]
+                                                                                .puntos +
+                                                                                incremento,
+                                                                        ),
                                                                 },
                                                             );
                                                         }}
@@ -951,97 +1217,170 @@ export default function Control() {
                                                 clave: "tiemposMuertos",
                                                 titulo: "T. muertos usados",
                                             },
-                                        ] as const).map((campo) => (
-                                            <div
-                                                key={campo.clave}
-                                                className="mt-4 flex items-center justify-between gap-2"
-                                            >
-                                                <span className="text-sm text-white/75">
-                                                    {campo.titulo}
-                                                </span>
-
-                                                <div className="flex items-center gap-2">
-                                                    {([-1, 1] as const).map(
-                                                        (incremento) => (
-                                                            <button
-                                                                key={incremento}
-                                                                type="button"
-                                                                disabled={!partido}
-                                                                onClick={() => {
-                                                                    if (!partido) return;
-
-                                                                    actualizarEquipo(
-                                                                        lado,
-                                                                        {
-                                                                            [campo.clave]: Math.max(
-                                                                                0,
-                                                                                partido[lado][campo.clave] +
-                                                                                    incremento,
-                                                                            ),
-                                                                        },
-                                                                    );
-                                                                }}
-                                                                className="flex size-8 cursor-pointer items-center justify-center rounded bg-white/10 font-bold hover:bg-white/20 disabled:opacity-50"
-                                                            >
-                                                                {incremento > 0
-                                                                    ? "+"
-                                                                    : "−"}
-                                                            </button>
-                                                        ),
-                                                    )}
-
-                                                    <span className="min-w-5 text-center font-bold">
-                                                        {partido?.[lado][campo.clave] ?? 0}
+                                        ] as const).map(
+                                            (campo) => (
+                                                <div
+                                                    key={campo.clave}
+                                                    className="mt-4 flex items-center justify-between gap-2"
+                                                >
+                                                    <span className="text-sm text-white/75">
+                                                        {campo.titulo}
                                                     </span>
+
+                                                    <div className="flex items-center gap-2">
+                                                        {([-1, 1] as const).map(
+                                                            (incremento) => (
+                                                                <button
+                                                                    key={incremento}
+                                                                    type="button"
+                                                                    disabled={!partido}
+                                                                    onClick={() => {
+                                                                        if (!partido) {
+                                                                            return;
+                                                                        }
+
+                                                                        actualizarEquipo(
+                                                                            lado,
+                                                                            {
+                                                                                [campo.clave]:
+                                                                                    Math.max(
+                                                                                        0,
+                                                                                        partido[lado][campo.clave] +
+                                                                                            incremento,
+                                                                                    ),
+                                                                            },
+                                                                        );
+                                                                    }}
+                                                                    className="flex size-8 cursor-pointer items-center justify-center rounded bg-white/10 font-bold hover:bg-white/20 disabled:opacity-50"
+                                                                >
+                                                                    {incremento > 0
+                                                                        ? "+"
+                                                                        : "−"}
+                                                                </button>
+                                                            ),
+                                                        )}
+
+                                                        <span className="min-w-5 text-center font-bold">
+                                                            {partido?.[lado][campo.clave] ??
+                                                                0}
+                                                        </span>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        ))}
+                                            ),
+                                        )}
                                     </div>
                                 ),
                             )}
                         </div>
 
-                        {/* PERIODO */}
+                        {/* =====================
+                            PERÍODO
+                            ===================== */}
 
-                        <div className="mt-4 flex items-center justify-between rounded-xl bg-brand-blue-deep p-4">
-                            <div>
-                                <p className="text-sm text-white/60">
-                                    Periodo
-                                </p>
+                        <div className="mt-4 rounded-xl bg-brand-blue-deep p-4">
 
-                                <p className="bebas-neue text-4xl text-primary">
-                                    {partido?.periodo ?? 1}
-                                </p>
-                            </div>
+                            <div className="flex items-center justify-between gap-4">
+                                <div>
+                                    <p className="text-sm text-white/60">
+                                        Período
+                                    </p>
 
-                            <div className="flex gap-2">
-                                {([-1, 1] as const).map(
-                                    (incremento) => (
-                                        <button
-                                            key={incremento}
-                                            type="button"
-                                            disabled={!partido}
-                                            onClick={() => {
-                                                if (partido) {
+                                    <p
+                                        className="bebas-neue mt-1 min-h-10 text-4xl text-primary"
+                                        aria-label={
+                                            usarPeriodoMondo &&
+                                            periodoMondo?.type === "empty"
+                                                ? "Período vacío"
+                                                : `Período: ${textoPeriodoPanel}`
+                                        }
+                                    >
+                                        {textoPeriodoPanel}
+                                    </p>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    {([-1, 1] as const).map(
+                                        (incremento) => (
+                                            <button
+                                                key={incremento}
+                                                type="button"
+                                                disabled={
+                                                    !partido ||
+                                                    usarPeriodoMondo
+                                                }
+                                                title={
+                                                    usarPeriodoMondo
+                                                        ? "El período lo controla MONDO mediante COM4"
+                                                        : incremento > 0
+                                                            ? "Aumentar período"
+                                                            : "Disminuir período"
+                                                }
+                                                onClick={() => {
+                                                    if (
+                                                        !partido ||
+                                                        usarPeriodoMondo
+                                                    ) {
+                                                        return;
+                                                    }
+
                                                     actualizarPeriodo(
                                                         partido.periodo +
                                                             incremento,
                                                     );
-                                                }
-                                            }}
-                                            className="min-h-11 min-w-12 cursor-pointer rounded-lg bg-primary text-xl font-bold text-brand-blue-deep hover:bg-brand-yellow-bright disabled:opacity-50"
-                                        >
-                                            {incremento > 0 ? "+" : "−"}
-                                        </button>
-                                    ),
+                                                }}
+                                                className="min-h-11 min-w-12 cursor-pointer rounded-lg bg-primary text-xl font-bold text-brand-blue-deep hover:bg-brand-yellow-bright disabled:cursor-not-allowed disabled:opacity-40"
+                                            >
+                                                {incremento > 0
+                                                    ? "+"
+                                                    : "−"}
+                                            </button>
+                                        ),
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* ESTADO Y PROCEDENCIA */}
+
+                            <div className="mt-3 border-t border-white/10 pt-3">
+                                <p className="text-xs text-white/65">
+                                    {detallePeriodo}
+                                </p>
+
+                                {usarPeriodoMondo && (
+                                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                                        <span className="rounded-md bg-white/10 px-2 py-1 text-xs font-medium">
+                                            Fuente: COM4
+                                        </span>
+
+                                        <span className="rounded-md bg-white/10 px-2 py-1 text-xs font-medium">
+                                            {periodoMondo === null
+                                                ? "Esperando AA"
+                                                : periodoMondo.type === "quarter"
+                                                    ? "Período normal"
+                                                    : periodoMondo.type === "overtime"
+                                                        ? "Prórroga"
+                                                        : "Período vacío"}
+                                        </span>
+
+                                        {periodoMondo && (
+                                            <span className="rounded-md bg-white/10 px-2 py-1 font-mono text-xs">
+                                                02 AA{" "}
+                                                {periodoMondo.raw
+                                                    .toString(16)
+                                                    .toUpperCase()
+                                                    .padStart(2, "0")}{" "}
+                                                03
+                                            </span>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         </div>
                     </section>
 
-                    {/* ====================================
+                    {/* =========================
                         DISEÑO
-                        ==================================== */}
+                        ========================= */}
 
                     <section className="rounded-2xl bg-brand-blue-dark p-5">
                         <h2 className="text-xl font-bold uppercase text-primary">
@@ -1054,7 +1393,9 @@ export default function Control() {
                                     key={diseno.id}
                                     type="button"
                                     onClick={() => {
-                                        setSelectedDiseno(diseno.id);
+                                        setSelectedDiseno(
+                                            diseno.id,
+                                        );
 
                                         guardarDisenoSeleccionado(
                                             diseno.id,
@@ -1086,9 +1427,9 @@ export default function Control() {
                         </div>
                     </section>
 
-                    {/* ====================================
+                    {/* =========================
                         REGLAS Y CATEGORÍA
-                        ==================================== */}
+                        ========================= */}
 
                     <section className="rounded-2xl bg-brand-blue-dark p-5">
                         <h2 className="text-xl font-bold uppercase text-primary">
@@ -1131,21 +1472,25 @@ export default function Control() {
                                 {[
                                     {
                                         titulo: "Periodos",
-                                        valor: reglas.periodos.cantidad,
+                                        valor:
+                                            reglas.periodos.cantidad,
                                     },
                                     {
                                         titulo: "Duración",
-                                        valor: `${reglas.periodos.duracion / 60} min`,
+                                        valor:
+                                            `${reglas.periodos.duracion / 60} min`,
                                     },
                                     {
                                         titulo: "Prórroga",
-                                        valor: reglas.prorroga.permitida
-                                            ? "Habilitada"
-                                            : "Deshabilitada",
+                                        valor:
+                                            reglas.prorroga.permitida
+                                                ? "Habilitada"
+                                                : "Deshabilitada",
                                     },
                                     {
                                         titulo: "Duración prórroga",
-                                        valor: `${reglas.prorroga.duracion / 60} min`,
+                                        valor:
+                                            `${reglas.prorroga.duracion / 60} min`,
                                     },
                                 ].map((info) => (
                                     <div
@@ -1165,9 +1510,9 @@ export default function Control() {
                         )}
                     </section>
 
-                    {/* ====================================
+                    {/* =========================
                         DATOS DE LOS EQUIPOS
-                        ==================================== */}
+                        ========================= */}
 
                     <section className="rounded-2xl bg-brand-blue-dark p-5">
                         <h2 className="text-xl font-bold uppercase text-primary">
@@ -1197,12 +1542,20 @@ export default function Control() {
                                         <input
                                             id={`nombre-${lado}`}
                                             type="text"
-                                            value={partido?.[lado].nombre ?? ""}
+                                            value={
+                                                partido?.[lado].nombre ??
+                                                ""
+                                            }
                                             onChange={(evento) =>
-                                                actualizarEquipo(lado, {
-                                                    nombre: evento.target.value,
-                                                    fuenteNombre: "manual",
-                                                })
+                                                actualizarEquipo(
+                                                    lado,
+                                                    {
+                                                        nombre:
+                                                            evento.target.value,
+                                                        fuenteNombre:
+                                                            "manual",
+                                                    },
+                                                )
                                             }
                                             className="mt-2 w-full rounded-lg bg-brand-blue-dark px-3 py-2 text-white"
                                         />
@@ -1217,13 +1570,21 @@ export default function Control() {
                                         <input
                                             id={`escudo-${lado}`}
                                             type="text"
-                                            value={partido?.[lado].escudo ?? ""}
+                                            value={
+                                                partido?.[lado].escudo ??
+                                                ""
+                                            }
                                             onChange={(evento) =>
-                                                actualizarEquipo(lado, {
-                                                    escudo:
-                                                        evento.target.value || null,
-                                                    fuenteEscudo: "manual",
-                                                })
+                                                actualizarEquipo(
+                                                    lado,
+                                                    {
+                                                        escudo:
+                                                            evento.target.value ||
+                                                            null,
+                                                        fuenteEscudo:
+                                                            "manual",
+                                                    },
+                                                )
                                             }
                                             placeholder="/marcador/escudo.png"
                                             className="mt-2 w-full rounded-lg bg-brand-blue-dark px-3 py-2 text-white"
@@ -1234,9 +1595,9 @@ export default function Control() {
                         </div>
                     </section>
 
-                    {/* ====================================
+                    {/* =========================
                         QR Y FBIB
-                        ==================================== */}
+                        ========================= */}
 
                     <section className="rounded-2xl bg-brand-blue-dark p-5">
                         <h2 className="text-xl font-bold uppercase text-primary">
@@ -1261,7 +1622,9 @@ export default function Control() {
                             <button
                                 type="button"
                                 onClick={() =>
-                                    setQrAbierto((actual) => !actual)
+                                    setQrAbierto(
+                                        (actual) => !actual,
+                                    )
                                 }
                                 aria-label="Mostrar código QR de vinculación"
                                 className="cursor-pointer rounded-lg bg-white p-2"
@@ -1284,27 +1647,15 @@ export default function Control() {
 
                                 <button
                                     type="button"
-                                    onClick={() => setQrAbierto(false)}
+                                    onClick={() =>
+                                        setQrAbierto(false)
+                                    }
                                     className="cursor-pointer rounded-lg bg-white/10 px-4 py-2 text-sm font-bold"
                                 >
                                     Cerrar
                                 </button>
                             </div>
                         )}
-
-                        {/* <div className="mt-4 rounded-xl bg-brand-blue-deep p-3">
-                            <p className="text-sm font-semibold">
-                                Consultas FBIB
-                            </p>
-
-                            <p className="mt-1 text-xs text-white/60">
-                                {estadoFBIB === "consultando"
-                                    ? "Consultando..."
-                                    : estadoFBIB === "disponible"
-                                        ? "Consulta correcta"
-                                        : "No disponible"}
-                            </p>
-                        </div> */}
 
                         <p className="mt-3 text-xs text-white/50">
                             La sincronización entre dispositivos todavía
@@ -1315,6 +1666,7 @@ export default function Control() {
                     <footer className="pb-4 text-center text-xs text-white/40">
                         C.B. Andratx · Sistema de marcador
                     </footer>
+
                 </div>
             </main>
         </>

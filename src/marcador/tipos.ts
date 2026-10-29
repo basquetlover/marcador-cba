@@ -1,4 +1,6 @@
 
+import type { PeriodoMondo } from "./DecodificadorMondo";
+
 /* ============================================
    MARCADOR CBA
    Tipos generales del sistema
@@ -9,163 +11,224 @@
 
 export type LadoEquipo = "local" | "visitante";
 
-export type ModoMarcador = "individual" | "multipista";
+export type ModoMarcador =
+    | "individual"
+    | "multipista";
 
-export type FuenteTiempo = "mondo" | "manual";
+export type FuenteTiempo =
+    | "mondo"
+    | "manual";
 
-export type FuenteEquipo = "manual" | "fbib" | "base-datos";
+export type FuenteEquipo =
+    | "manual"
+    | "fbib"
+    | "base-datos";
 
 
 // 2. EQUIPOS
 
 export interface EquipoMarcador {
-  id: string | null;
+    id: string | null;
 
-  nombre: string;
-  escudo: string | null;
+    nombre: string;
+    escudo: string | null;
 
-  puntos: number;
-  faltas: number;
-  tiemposMuertos: number;
+    puntos: number;
+    faltas: number;
+    tiemposMuertos: number;
 
-  fuenteNombre: FuenteEquipo;
-  fuenteEscudo: FuenteEquipo;
+    fuenteNombre: FuenteEquipo;
+    fuenteEscudo: FuenteEquipo;
 }
 
 
 // 3. PARTIDOS
 
 export interface PartidoMarcador {
-  id: string;
+    id: string;
 
-  categoriaId: string | null;
-  periodo: number;
+    categoriaId: string | null;
 
-  local: EquipoMarcador;
-  visitante: EquipoMarcador;
+    /*
+     * PERÍODO NUMÉRICO
+     *
+     * Conserva la compatibilidad con:
+     * - Controles manuales
+     * - Botones + y -
+     * - Componentes existentes
+     *
+     * Cuando MONDO envía AA 51-59,
+     * este número también se actualiza.
+     *
+     * AA 50 y AA 5F no deben convertir
+     * este número en cero.
+     */
+    periodo: number;
 
-  posesion: LadoEquipo | null;
+    /*
+     * PERÍODO RECIBIDO DESDE MONDO
+     *
+     * undefined:
+     *   Todavía no se ha establecido.
+     *
+     * null:
+     *   No existe una lectura MONDO activa.
+     *
+     * quarter:
+     *   AA 51-59 => períodos 1-9.
+     *
+     * overtime:
+     *   AA 50 => tiempo extra.
+     *
+     * empty:
+     *   AA 5F => no mostrar período.
+     *
+     * El objeto conserva el byte original.
+     */
+    periodoMondo?: PeriodoMondo | null;
+
+    local: EquipoMarcador;
+    visitante: EquipoMarcador;
+
+    posesion: LadoEquipo | null;
 }
 
 
 // 4. RELOJES
 
 export interface RelojMarcador {
-  id: string;
+    id: string;
 
-  fuente: FuenteTiempo;
-  texto: string;
+    fuente: FuenteTiempo;
+    texto: string;
 
-  actualizadoEn: number | null;
+    actualizadoEn: number | null;
 }
 
 
 // 5. ESTADO GENERAL DEL MARCADOR
 
 export interface DatosMarcador {
-  modo: ModoMarcador;
+    modo: ModoMarcador;
 
-  partidoPrincipalId: string;
+    partidoPrincipalId: string;
 
-  partidos: Record<string, PartidoMarcador>;
-  relojes: Record<string, RelojMarcador>;
+    partidos: Record<
+        string,
+        PartidoMarcador
+    >;
+
+    relojes: Record<
+        string,
+        RelojMarcador
+    >;
 }
 
 
 // 6. TIPOS DE PIEZAS
 
 export type TipoPieza =
-  | "tiempo"
-  | "puntos"
-  | "nombre-equipo"
-  | "escudo-equipo"
-  | "periodo"
-  | "faltas"
-  | "tiempos-muertos"
-  | "posesion"
-  | "imagen"
-  | "texto"
-  | (string & {});
+    | "tiempo"
+    | "puntos"
+    | "nombre-equipo"
+    | "escudo-equipo"
+    | "periodo"
+    | "faltas"
+    | "tiempos-muertos"
+    | "posesion"
+    | "imagen"
+    | "texto"
+    | "multimedia"
+    | (string & {});
 
 
 // 7. VINCULACIÓN DE PIEZAS
 
 export interface VinculacionPieza {
-  relojId?: string;
+    relojId?: string;
 
-  partidoId?: string;
+    partidoId?: string;
 
-  lado?: LadoEquipo;
+    lado?: LadoEquipo;
 }
 
 
 // 8. ESTILOS DE PIEZAS
 
 export interface EstiloPieza {
-  color?: string;
-  fondo?: string;
+    color?: string;
+    fondo?: string;
 
-  fuente?: string;
-  tamanoFuente?: number;
+    fuente?: string;
+    tamanoFuente?: number;
 
-  alineacion?: "izquierda" | "centro" | "derecha";
+    alineacion?:
+        | "izquierda"
+        | "centro"
+        | "derecha";
 }
 
 
 // 9. PIEZA DEL MARCADOR
 
 export interface PiezaMarcador {
-  id: string;
-  tipo: TipoPieza;
-  nombre: string;
+    id: string;
 
-  // Posición en el lienzo
-  x: number;
-  y: number;
+    tipo: TipoPieza;
+    nombre: string;
 
-  // Dimensiones
-  ancho: number;
-  alto: number;
+    // Posición en el lienzo
 
-  // Orden de capas
-  zIndex: number;
+    x: number;
+    y: number;
 
-  // Estado visual
-  visible: boolean;
-  bloqueado: boolean;
+    // Dimensiones
 
-  // Datos asociados
-  vinculacion: VinculacionPieza;
+    ancho: number;
+    alto: number;
 
-  // Apariencia
-  estilo: EstiloPieza;
+    // Orden de capas
 
-  // Opciones adicionales según la pieza
-  propiedades?: Record<
-    string,
-    string | number | boolean | null
-  >;
+    zIndex: number;
+
+    // Estado visual
+
+    visible: boolean;
+    bloqueado: boolean;
+
+    // Datos asociados
+
+    vinculacion: VinculacionPieza;
+
+    // Apariencia
+
+    estilo: EstiloPieza;
+
+    // Opciones adicionales
+
+    propiedades?: Record<
+        string,
+        string | number | boolean | null
+    >;
 }
 
 
 // 10. DISEÑOS DEL MARCADOR
 
 export interface DisenoMarcador {
-  version: 1;
+    version: 1;
 
-  id: string;
-  nombre: string;
+    id: string;
+    nombre: string;
 
-  miniatura?: string;
+    miniatura?: string;
 
-  // Resolución lógica del diseño
-  resolucion: {
-    ancho: number;
-    alto: number;
-  };
+    resolucion: {
+        ancho: number;
+        alto: number;
+    };
 
-  fondo: string;
+    fondo: string;
 
-  // Elementos visuales del marcador
-  capas: PiezaMarcador[];
+    capas: PiezaMarcador[];
 }
