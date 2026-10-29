@@ -1,25 +1,23 @@
 
 import type { EstiloPieza } from "../tipos";
 
-
 /* ============================================
    MARCADOR CBA
    Pieza visual: Periodo
+
+   Admite:
+   - Periodo numérico manual
+   - Periodo recibido de MONDO
+   - Valores alfabéticos
    ============================================ */
 
-
-// 1. PROPIEDADES
-
 interface PeriodoProps {
-    periodo: number;
+    periodo: number | string;
     estilo: EstiloPieza;
 
     cantidadPeriodos?: number | null;
     formato?: "numero" | "texto";
 }
-
-
-// 2. COMPONENTE PRINCIPAL
 
 export default function Periodo({
     periodo,
@@ -28,51 +26,99 @@ export default function Periodo({
     formato = "numero",
 }: PeriodoProps) {
 
-    // 3. CONFIGURACIÓN VISUAL
+    // CONFIGURACIÓN VISUAL
 
     const color = estilo.color ?? "#FFFFFF";
-
     const fondo = estilo.fondo ?? "transparent";
 
-    const fuente = estilo.fuente ?? '"Bebas Neue", sans-serif';
+    const fuente =
+        estilo.fuente ?? '"Bebas Neue", sans-serif';
 
-    const tamanoFuente = estilo.tamanoFuente ?? 80;
+    const tamanoFuente =
+        estilo.tamanoFuente ?? 80;
 
-    const alineacion = estilo.alineacion ?? "centro";
+    const alineacion =
+        estilo.alineacion ?? "centro";
 
 
-    // 4. CONFIGURACIÓN DEL PERIODO
+    // VALOR ORIGINAL DEL PERÍODO
 
-    const periodoActual = Number.isFinite(periodo)
-        ? Math.max(1, Math.trunc(periodo))
-        : 1;
+    const valorOriginal =
+        typeof periodo === "string"
+            ? periodo.trim()
+            : Number.isFinite(periodo)
+                ? String(Math.trunc(periodo))
+                : "1";
+
+
+    // DISTINGUIR NÚMEROS DE LETRAS
+
+    const esNumerico = /^\d+$/.test(valorOriginal);
+
+    const periodoNumerico = esNumerico
+        ? Math.max(1, Number(valorOriginal))
+        : null;
+
+
+    // CONFIGURACIÓN DE PRÓRROGAS
 
     const limitePeriodos =
         cantidadPeriodos !== null &&
-        Number.isFinite(cantidadPeriodos) &&
-        cantidadPeriodos > 0
+            Number.isFinite(cantidadPeriodos) &&
+            cantidadPeriodos > 0
             ? Math.trunc(cantidadPeriodos)
             : null;
 
     const esProrroga =
+        periodoNumerico !== null &&
         limitePeriodos !== null &&
-        periodoActual > limitePeriodos;
+        periodoNumerico > limitePeriodos;
 
     const numeroProrroga =
-        esProrroga && limitePeriodos !== null
-            ? periodoActual - limitePeriodos
+        esProrroga &&
+            periodoNumerico !== null &&
+            limitePeriodos !== null
+            ? periodoNumerico - limitePeriodos
             : 0;
 
-    const textoPeriodo = esProrroga
-        ? formato === "texto"
-            ? `PRÓRROGA ${numeroProrroga}`
-            : `PR${numeroProrroga}`
-        : formato === "texto"
-            ? `PERIODO ${periodoActual}`
-            : String(periodoActual);
+
+    // TEXTO QUE APARECE EN EL MARCADOR
+
+    let textoPeriodo: string;
+
+    if (!esNumerico) {
+
+        // MONDO puede enviar una letra.
+        // Se muestra literalmente, sin convertirla
+        // a un período numérico ni a una prórroga.
+
+        textoPeriodo = valorOriginal || "-";
+
+    } else if (esProrroga) {
+
+        textoPeriodo =
+            formato === "texto"
+                ? `PRÓRROGA ${numeroProrroga}`
+                : `PR${numeroProrroga}`;
+
+    } else {
+
+        textoPeriodo =
+            formato === "texto"
+                ? `PERIODO ${periodoNumerico}`
+                : String(periodoNumerico);
+    }
 
 
-    // 5. ÚNICO RETURN
+    // ETIQUETA ACCESIBLE
+
+    const etiqueta =
+        esProrroga
+            ? `Prórroga ${numeroProrroga}`
+            : `Periodo ${valorOriginal}`;
+
+
+    // REPRESENTACIÓN VISUAL
 
     return (
         <div
@@ -88,26 +134,17 @@ export default function Periodo({
                             : "center",
 
                 backgroundColor: fondo,
-
-                color: color,
+                color,
 
                 fontFamily: fuente,
-
                 fontSize: `${tamanoFuente}px`,
 
                 fontVariantNumeric: "tabular-nums",
-
                 fontWeight: 500,
-
                 lineHeight: 1,
-
                 boxSizing: "border-box",
             }}
-            aria-label={
-                esProrroga
-                    ? `Prórroga ${numeroProrroga}`
-                    : `Periodo ${periodoActual}`
-            }
+            aria-label={etiqueta}
         >
             <span
                 className="block min-w-0 max-w-full overflow-hidden text-ellipsis whitespace-nowrap"
