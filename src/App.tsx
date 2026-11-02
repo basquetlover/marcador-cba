@@ -6,6 +6,7 @@ import { Route, Routes } from "react-router";
 import Control from "./pages/Control";
 
 import MarcadorProvider from "./marcador/MarcadorProvider";
+import Diagnostico from "./pages/Diagnostico";
 
 
 /* ============================================
@@ -35,6 +36,11 @@ export default function App() {
                 <Route
                     path="/control"
                     element={<Control />}
+                />
+
+                <Route
+                    path="/diagnostico"
+                    element={<Diagnostico />}
                 />
 
             </Routes>
