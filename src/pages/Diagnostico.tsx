@@ -1,2048 +1,463 @@
-
-import {
-    useCallback,
-    useEffect,
-    useRef,
-    useState,
-} from "react";
-
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router";
-
-import {
-    DecodificadorMondo,
-} from "../marcador/DecodificadorMondo";
-
-import type {
-    LecturaTiempoMondo,
-    PeriodoMondo,
-    TramaMondo,
-    TiempoEspecialMondo,
-} from "../marcador/DecodificadorMondo";
-
 import usePageTitle from "../lib/usePageTitle";
 
-/* ============================================
-   MONDO / DIAGNÓSTICO WEB SERIAL
-   Ruta: /diagnostico
+/*
+ * CBA · Diagnóstico RAW MONDO
+ * Ruta: /diagnostico
+ * Sin MarcadorProvider, sin parser y sin decoder.
+ * Ninguna operación de escritura ni setSignals().
+ */
 
-   Independiente de MarcadorProvider.
-   Lectura directa de COM4.
-   Mismo decoder que usa el marcador.
-   ============================================ */
+const SERIAL = {
+    baudRate: 19200,
+    dataBits: 8,
+    stopBits: 1,
+    parity: "none",
+    flowControl: "none",
+} as const;
 
-const BAUD_RATE = 19200;
+const MAX_RAW = 5000;
+const MAX_EVENTOS = 500;
 
-const MAX_TRAMAS = 25000;
-const MAX_BLOQUES = 8000;
-
-const TRAMAS_VISIBLES = 45;
-const BLOQUES_VISIBLES = 35;
-
-type Conexion =
+type Estado =
     | "desconectado"
     | "seleccionando"
     | "abriendo"
-    | "conectado"
+    | "escuchando"
+    | "cerrando"
     | "error";
 
-type TipoSalida =
-    | "tiempo"
-    | "periodo"
-    | "especial"
-    | "sin-salida";
-
-/* ============================================
-   TIPOS WEB SERIAL
-   ============================================ */
-
-interface InformacionPuerto {
-    usbVendorId?: number;
-    usbProductId?: number;
-    bluetoothServiceClassId?: string;
-}
-
-interface PuertoWebSerial {
-    readonly readable:
-        ReadableStream<Uint8Array> | null;
-
-    open(options: {
-        baudRate: number;
-        dataBits: number;
-        stopBits: number;
-        parity: "none";
-        flowControl: "none";
-    }): Promise<void>;
-
+interface PuertoSerial {
+    readonly readable: ReadableStream<Uint8Array> | null;
+    open(opciones: typeof SERIAL): Promise<void>;
     close(): Promise<void>;
-
-    getInfo?(): InformacionPuerto;
+    getInfo?: () => {
+        usbVendorId?: number;
+        usbProductId?: number;
+        bluetoothServiceClassId?: string;
+    };
 }
 
 interface APIWebSerial {
-    requestPort(): Promise<PuertoWebSerial>;
+    requestPort(): Promise<PuertoSerial>;
 }
 
-/* ============================================
-   REGISTROS DEL DIAGNÓSTICO
-   ============================================ */
-
-interface BloqueBruto {
+interface RegistroRAW {
     id: number;
     recibidoEn: string;
-
     bytes: number;
     hexadecimal: string;
-
-    esperaLecturaMs: number;
-    procesamientoMs: number;
-
-    tramasDetectadas: number;
+    decimal: string;
+    esperaReadMs: number;
 }
 
-interface TramaRegistro {
+interface EventoDiagnostico {
     id: number;
-
-    recibidaEn: string;
-    reconocidaEn: string;
-
-    hexadecimal: string;
-    direccion: string;
-    dato: string;
-
-    registro: string;
-    significado: string;
-
-    salidaTipo: TipoSalida;
-    salida: string;
-
-    resultadoEn: string | null;
-
-    desdeLecturaMs: number | null;
-    desdeTramaMs: number | null;
+    fecha: string;
+    etapa: string;
+    mensaje: string;
 }
 
-interface TramaInterna extends TramaRegistro {
-    _reconocidaMs: number;
+const HEX = (valor: number) => valor.toString(16).toUpperCase().padStart(2, "0");
+const FECHA = () => new Date().toISOString();
+
+function mostrarHora(fecha: string | null): string {
+    return fecha
+        ? new Date(fecha).toLocaleTimeString("es-ES", {
+              hour12: false,
+              hour: "2-digit",
+              minute: "2-digit",
+              second: "2-digit",
+              fractionalSecondDigits: 3,
+          })
+        : "—";
 }
 
-interface Metricas {
-    bytes: number;
-    bloques: number;
-    tramas: number;
-
-    relojes: number;
-    periodos: number;
-    especiales: number;
-    otrasDirecciones: number;
-
-    recibidaPrimera: string | null;
-    recibidaUltima: string | null;
-    resultadoUltimo: string | null;
-
-    esperaUltimaMs: number | null;
-    procesoUltimoMs: number | null;
-    procesoMaxMs: number;
-
-    latenciaUltimaMs: number | null;
-    maxLatenciaMs: number;
-
-    bloquesDescartados: number;
-    tramasDescartadas: number;
+function guardarArchivo(nombre: string, texto: string, tipo: string): void {
+    const url = URL.createObjectURL(new Blob([texto], { type: tipo }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nombre;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
-interface Almacen {
-    metricas: Metricas;
-
-    bloques: BloqueBruto[];
-    tramas: TramaRegistro[];
-
-    reloj: LecturaTiempoMondo | null;
-    periodo: PeriodoMondo | null;
-
-    ultimoError: string | null;
-}
-
-interface Vista {
-    metricas: Metricas;
-
-    bloques: BloqueBruto[];
-    tramas: TramaRegistro[];
-
-    reloj: LecturaTiempoMondo | null;
-    periodo: PeriodoMondo | null;
-
-    ultimoError: string | null;
-}
-
-/* ============================================
-   ESTADO INICIAL
-   ============================================ */
-
-function metricasVacias(): Metricas {
-    return {
-        bytes: 0,
-        bloques: 0,
-        tramas: 0,
-
-        relojes: 0,
-        periodos: 0,
-        especiales: 0,
-        otrasDirecciones: 0,
-
-        recibidaPrimera: null,
-        recibidaUltima: null,
-        resultadoUltimo: null,
-
-        esperaUltimaMs: null,
-        procesoUltimoMs: null,
-        procesoMaxMs: 0,
-
-        latenciaUltimaMs: null,
-        maxLatenciaMs: 0,
-
-        bloquesDescartados: 0,
-        tramasDescartadas: 0,
-    };
-}
-
-function nuevoAlmacen(): Almacen {
-    return {
-        metricas: metricasVacias(),
-
-        bloques: [],
-        tramas: [],
-
-        reloj: null,
-        periodo: null,
-
-        ultimoError: null,
-    };
-}
-
-function generarVista(
-    almacen: Almacen,
-): Vista {
-    return {
-        metricas: {
-            ...almacen.metricas,
-        },
-
-        bloques: almacen.bloques
-            .slice(-BLOQUES_VISIBLES)
-            .reverse(),
-
-        tramas: almacen.tramas
-            .slice(-TRAMAS_VISIBLES)
-            .reverse()
-            .map((trama) => ({ ...trama })),
-
-        reloj: almacen.reloj
-            ? { ...almacen.reloj }
-            : null,
-
-        periodo: almacen.periodo
-            ? { ...almacen.periodo }
-            : null,
-
-        ultimoError: almacen.ultimoError,
-    };
-}
-
-/* ============================================
-   UTILIDADES
-   ============================================ */
-
-function hex(
-    byte: number,
-): string {
-    return byte
-        .toString(16)
-        .toUpperCase()
-        .padStart(2, "0");
-}
-
-function milisegundos(
-    valor: number | null,
-): string {
-    return valor === null
-        ? "—"
-        : `${valor.toFixed(3)} ms`;
-}
-
-function hora(
-    iso: string | null,
-): string {
-    if (!iso) return "—";
-
-    return new Date(iso).toLocaleTimeString(
-        "es-ES",
-        {
-            hour12: false,
-
-            hour: "2-digit",
-            minute: "2-digit",
-            second: "2-digit",
-
-            fractionalSecondDigits: 3,
-        },
-    );
-}
-
-/* ============================================
-   IDENTIFICACIÓN DE DIRECCIONES
-
-   Esta función solo añade etiquetas
-   al diagnóstico. La interpretación
-   efectiva la hace DecodificadorMondo.
-   ============================================ */
-
-function identificarRegistro(
-    direccion: number,
-    dato: number,
-): {
-    nombre: string;
-    significado: string;
-    conocido: boolean;
-} {
-    const reloj = new Map([
-        [0xa3, "A3"],
-        [0xa2, "A2"],
-        [0xa1, "A1"],
-        [0xa0, "A0"],
-
-        [0x74, "74"],
-        [0x73, "73"],
-        [0x72, "72"],
-        [0x71, "71"],
-    ]);
-
-    if (direccion === 0xaa) {
-        const texto =
-            dato === 0x50
-                ? "Prórroga (dato 50)"
-                : dato === 0x5f
-                    ? "Período vacío (dato 5F)"
-                    : dato >= 0x51 &&
-                        dato <= 0x59
-                        ? `Período ${dato - 0x50}`
-                        : "Dato de período no reconocido";
-
-        return {
-            nombre: "AA · Período",
-            significado: texto,
-            conocido: true,
-        };
-    }
-
-    if (reloj.has(direccion)) {
-        const valor =
-            dato === 0x5f
-                ? "Valor especial 5F"
-                : dato >= 0x50 &&
-                    dato <= 0x59
-                    ? `Dígito ${dato - 0x50}`
-                    : "Dato no reconocido";
-
-        return {
-            nombre:
-                `${reloj.get(direccion)} · Reloj`,
-
-            significado: valor,
-            conocido: true,
-        };
-    }
-
-    return {
-        nombre: `${hex(direccion)} · Otra`,
-
-        significado:
-            `Dirección ${hex(direccion)}, ` +
-            `dato ${hex(dato)} sin interpretación`,
-
-        conocido: false,
-    };
-}
-
-/* ============================================
-   ESTILOS
-   ============================================ */
-
-const PANEL =
-    "rounded-2xl border border-sky-300/10 " +
-    "bg-[#0d2137] p-4 shadow-lg " +
-    "shadow-black/10 sm:p-5";
-
-const ETIQUETA =
-    "text-[11px] font-semibold uppercase " +
-    "tracking-[0.14em] text-sky-200/55";
-
-const BOTON =
-    "rounded-xl px-4 py-2.5 text-sm " +
-    "font-semibold transition-colors " +
-    "disabled:cursor-not-allowed " +
-    "disabled:opacity-40";
-
-/* ============================================
-   PÁGINA PRINCIPAL
-   ============================================ */
+const PANEL = "rounded-2xl border border-cyan-200/10 bg-[#0D2339] p-5 shadow-lg shadow-black/10";
+const BOTON = "rounded-lg px-4 py-2.5 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-40";
 
 export default function Diagnostico() {
-    usePageTitle("Diagnóstico MONDO · COM4");
+    usePageTitle("Diagnóstico RAW · MONDO");
 
-    const [
-        conexion,
-        setConexion,
-    ] = useState<Conexion>("desconectado");
+    const [estado, setEstado] = useState<Estado>("desconectado");
+    const [mensaje, setMensaje] = useState("Selecciona COM4 en el diálogo de Chrome o Edge.");
+    const [, forzarPintado] = useState(0);
 
-    const [
-        detalle,
-        setDetalle,
-    ] = useState(
-        "Sin conexión con la consola.",
-    );
-
-    const [
-        infoPuerto,
-        setInfoPuerto,
-    ] = useState<InformacionPuerto | null>(
-        null,
-    );
-
-    const [
-        iniciadoEn,
-        setIniciadoEn,
-    ] = useState<string | null>(null);
-
-    const almacenRef = useRef<Almacen>(
-        nuevoAlmacen(),
-    );
-
-    const [
-        vista,
-        setVista,
-    ] = useState<Vista>(() =>
-        generarVista(almacenRef.current),
-    );
-
-    const puertoRef = useRef<
-        PuertoWebSerial | null
-    >(null);
-
-    const lectorRef = useRef<
-        ReadableStreamDefaultReader<
-            Uint8Array
-        > | null
-    >(null);
-
-    const lecturaRef = useRef<
-        Promise<void> | null
-    >(null);
-
-    const decodificadorRef = useRef<
-        DecodificadorMondo | null
-    >(null);
-
+    const puertoRef = useRef<PuertoSerial | null>(null);
+    const lectorRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+    const tareaRef = useRef<Promise<void> | null>(null);
     const sesionRef = useRef(0);
+    const seleccionandoRef = useRef(false);
+    const estadoRef = useRef<Estado>("desconectado");
 
-    const refrescoRef = useRef<
-        number | null
-    >(null);
+    const datosRef = useRef({
+        inicio: null as string | null,
+        puertoAbierto: null as string | null,
+        lectorActivo: null as string | null,
+        ultimaPeticionRead: null as string | null,
+        ultimoRAW: null as string | null,
+        fin: null as string | null,
+        dispositivo: null as ReturnType<NonNullable<PuertoSerial["getInfo"]>> | null,
+        totalBytes: 0,
+        totalBloques: 0,
+        descartados: 0,
+        eventosDescartados: 0,
+        lecturas: [] as RegistroRAW[],
+        eventos: [] as EventoDiagnostico[],
+    });
 
-    /* ========================================
-       ACTUALIZAR INTERFAZ
-
-       La captura guarda todos los registros
-       retenidos, pero la vista se refresca
-       como máximo aproximadamente cada 120 ms.
-       ======================================== */
-
-    const refrescar = useCallback(() => {
-        if (refrescoRef.current !== null) {
-            return;
-        }
-
-        refrescoRef.current = window.setTimeout(
-            () => {
-                refrescoRef.current = null;
-
-                setVista(
-                    generarVista(
-                        almacenRef.current,
-                    ),
-                );
-            },
-            120,
-        );
+    const cambiarEstado = useCallback((nuevo: Estado) => {
+        estadoRef.current = nuevo;
+        setEstado(nuevo);
     }, []);
 
-    const anotarError = useCallback((
-        mensaje: string,
-    ) => {
-        almacenRef.current.ultimoError =
-            mensaje;
-
-        refrescar();
-    }, [refrescar]);
-
-    /* ========================================
-       DESCONECTAR
-       ======================================== */
-
-    const cerrarPuerto = useCallback(async () => {
-        ++sesionRef.current;
-
-        const lector = lectorRef.current;
-
-        if (lector) {
-            try {
-                await lector.cancel();
-            } catch {
-                // Ya se desconectó.
-            }
+    const registrar = useCallback((etapa: string, texto: string) => {
+        const d = datosRef.current;
+        d.eventos.push({ id: d.eventosDescartados + d.eventos.length + 1, fecha: FECHA(), etapa, mensaje: texto });
+        if (d.eventos.length > MAX_EVENTOS) {
+            d.eventos.shift();
+            d.eventosDescartados++;
         }
-
-        if (lecturaRef.current) {
-            try {
-                await lecturaRef.current;
-            } catch {
-                // Error registrado.
-            }
-        }
-
-        const puerto = puertoRef.current;
-
-        if (puerto) {
-            try {
-                await puerto.close();
-            } catch {
-                // Ya cerrado.
-            }
-        }
-
-        puertoRef.current = null;
-        lectorRef.current = null;
-        lecturaRef.current = null;
-        decodificadorRef.current = null;
-
-        setConexion("desconectado");
-
-        setDetalle(
-            "Puerto serie cerrado. " +
-            "El registro permanece disponible " +
-            "para descargar.",
-        );
+        console.info(`[${etapa}] ${texto}`);
     }, []);
 
-    /* ========================================
-       LIMPIEZA AL SALIR DE /diagnostico
-       ======================================== */
-
+    // Este temporizador solo refresca la interfaz. Nunca consulta COM4.
     useEffect(() => {
+        const id = window.setInterval(() => forzarPintado(n => n + 1), 250);
         return () => {
+            window.clearInterval(id);
             ++sesionRef.current;
-
-            if (refrescoRef.current !== null) {
-                clearTimeout(refrescoRef.current);
-            }
-
-            const lector =
-                lectorRef.current;
-
+            const lector = lectorRef.current;
             if (lector) {
-                void lector.cancel().catch(
-                    () => undefined,
-                );
+                void lector.cancel().catch(() => undefined);
             } else {
-                const puerto =
-                    puertoRef.current;
-
-                if (puerto) {
-                    void puerto.close().catch(
-                        () => undefined,
-                    );
-                }
+                const puerto = puertoRef.current;
+                if (puerto) void puerto.close().catch(() => undefined);
             }
         };
     }, []);
 
-    /* ========================================
-       CONECTAR WEB SERIAL
-       ======================================== */
+    const desconectar = useCallback(async () => {
+        ++sesionRef.current;
+        cambiarEstado("cerrando");
+        registrar("SERIAL", "Cancelando lectura y cerrando puerto");
+
+        try { await lectorRef.current?.cancel(); } catch { /* lector cerrado */ }
+        try { await tareaRef.current; } catch { /* registrado por la tarea */ }
+        if (puertoRef.current) {
+            try { await puertoRef.current.close(); } catch { /* puerto cerrado */ }
+        }
+        puertoRef.current = null;
+        lectorRef.current = null;
+        tareaRef.current = null;
+        seleccionandoRef.current = false;
+        datosRef.current.fin = FECHA();
+        cambiarEstado("desconectado");
+        setMensaje("Captura detenida. Puedes descargar los datos obtenidos.");
+    }, [cambiarEstado, registrar]);
 
     const conectar = useCallback(async () => {
-        if (
-            conexion === "seleccionando" ||
-            conexion === "abriendo" ||
-            puertoRef.current
-        ) {
+        if (seleccionandoRef.current || puertoRef.current) return;
+        const serial = (navigator as Navigator & { serial?: APIWebSerial }).serial;
+        if (!window.isSecureContext || !serial) {
+            cambiarEstado("error");
+            setMensaje("Web Serial necesita Chrome/Edge en HTTPS o localhost.");
+            registrar("ERROR", "Web Serial no disponible en este contexto");
             return;
         }
 
-        const serial = (
-            navigator as Navigator & {
-                serial?: APIWebSerial;
-            }
-        ).serial;
-
-        if (
-            !window.isSecureContext ||
-            !serial
-        ) {
-            const mensaje =
-                "Web Serial requiere Chrome o Edge " +
-                "de escritorio en HTTPS o localhost.";
-
-            setConexion("error");
-            setDetalle(mensaje);
-
-            anotarError(mensaje);
-            return;
-        }
-
-        const sesion =
-            ++sesionRef.current;
-
-        setConexion("seleccionando");
-
-        setDetalle(
-            "Selecciona COM4 en el diálogo del navegador.",
-        );
-
-        let puerto: PuertoWebSerial;
+        seleccionandoRef.current = true;
+        const sesion = ++sesionRef.current;
+        cambiarEstado("seleccionando");
+        registrar("SERIAL", "Solicitando selección del puerto COM4 (Windows)");
+        let puerto: PuertoSerial;
 
         try {
-            // Debe ejecutarse directamente
-            // desde la interacción del usuario.
-
-            puerto =
-                await serial.requestPort();
-
-        } catch (error) {
-            const mensaje =
-                error instanceof Error
-                    ? error.message
-                    : "Selección de puerto cancelada";
-
-            if (
-                sesion !== sesionRef.current
-            ) {
-                return;
-            }
-
-            setConexion("desconectado");
-            setDetalle(mensaje);
-
+            // La elección debe estar vinculada directamente al clic del usuario.
+            puerto = await serial.requestPort();
+        } catch (e) {
+            seleccionandoRef.current = false;
+            if (sesion !== sesionRef.current) return;
+            cambiarEstado("desconectado");
+            setMensaje(e instanceof Error ? e.message : "Selección cancelada");
+            registrar("SERIAL", "Selección cancelada o fallida");
             return;
         }
-
-        if (
-            sesion !== sesionRef.current
-        ) {
+        if (sesion !== sesionRef.current) {
+            seleccionandoRef.current = false;
             return;
         }
-
-        setConexion("abriendo");
-
-        setDetalle(
-            "Abriendo puerto a 19200 baudios, 8N1...",
-        );
 
         puertoRef.current = puerto;
+        cambiarEstado("abriendo");
+        registrar("SERIAL", "Intentando abrir puerto seleccionado (verifica COM4)");
+        registrar("SERIAL", "19200 baud · 8 data bits · parity none · 1 stop bit · flow control none");
 
         try {
-            await puerto.open({
-                baudRate: BAUD_RATE,
-                dataBits: 8,
-                stopBits: 1,
-                parity: "none",
-                flowControl: "none",
-            });
+            await puerto.open(SERIAL);
+            if (sesion !== sesionRef.current) {
+                await puerto.close();
+                if (puertoRef.current === puerto) puertoRef.current = null;
+                return;
+            }
+            datosRef.current.inicio ??= FECHA();
+            datosRef.current.puertoAbierto = FECHA();
+            try { datosRef.current.dispositivo = puerto.getInfo?.() ?? null; } catch { /* opcional */ }
+            registrar("SERIAL", "COM4 abierto (puerto seleccionado por el usuario)");
 
-            if (
-                sesion !== sesionRef.current
-            ) {
+            if (!puerto.readable) throw new Error("readable === null después de open()");
+            const lector = puerto.readable.getReader();
+            lectorRef.current = lector;
+            datosRef.current.lectorActivo = FECHA();
+            registrar("SERIAL", "getReader() correcto. Iniciando reader.read()");
+            seleccionandoRef.current = false;
+            cambiarEstado("escuchando");
+            setMensaje("Puerto abierto y reader.read() activo: esperando cualquier byte RAW.");
+
+            const tarea = async () => {
                 try {
-                    await puerto.close();
-                } catch {
-                    // Cerrado.
-                }
-
-                return;
-            }
-
-        } catch (error) {
-            if (
-                sesion !== sesionRef.current
-            ) {
-                return;
-            }
-
-            const mensaje =
-                error instanceof Error
-                    ? error.message
-                    : "No se pudo abrir el puerto";
-
-            puertoRef.current = null;
-
-            setConexion("error");
-
-            setDetalle(
-                `Error al abrir el puerto: ${mensaje}. ` +
-                "Cierra el marcador u otro programa " +
-                "que use COM4.",
-            );
-
-            anotarError(mensaje);
-            return;
-        }
-
-        setInfoPuerto(
-            puerto.getInfo?.() ?? null,
-        );
-
-        setIniciadoEn(
-            new Date().toISOString(),
-        );
-
-        setConexion("conectado");
-
-        setDetalle(
-            "Puerto abierto. Capturando bytes " +
-            "y ejecutando el decoder MONDO...",
-        );
-
-        /* ====================================
-           CONTEXTO DE CADA LECTURA
-
-           Los callbacks del decoder son
-           síncronos. Asociamos la trama
-           y la salida con el bloque leído.
-           ==================================== */
-
-        let contexto: {
-            recibidoEn: string;
-            inicioMs: number;
-            bloque: BloqueBruto;
-
-            tramaActual:
-                TramaInterna | null;
-        } | null = null;
-
-        /* ====================================
-           REGISTRAR UNA SALIDA
-           ==================================== */
-
-        function registrarResultado(
-            tipo: TipoSalida,
-            texto: string,
-        ) {
-            if (
-                !contexto ||
-                !contexto.tramaActual
-            ) {
-                return;
-            }
-
-            const marca =
-                performance.now();
-
-            const trama =
-                contexto.tramaActual;
-
-            trama.salidaTipo = tipo;
-            trama.salida = texto;
-
-            trama.resultadoEn =
-                new Date().toISOString();
-
-            trama.desdeLecturaMs =
-                marca - contexto.inicioMs;
-
-            trama.desdeTramaMs =
-                marca - trama._reconocidaMs;
-
-            const m =
-                almacenRef.current.metricas;
-
-            m.resultadoUltimo =
-                trama.resultadoEn;
-
-            m.latenciaUltimaMs =
-                trama.desdeLecturaMs;
-
-            m.maxLatenciaMs = Math.max(
-                m.maxLatenciaMs,
-                trama.desdeLecturaMs,
-            );
-        }
-
-        /* ====================================
-           DECODIFICADOR REAL
-           ==================================== */
-
-        const decodificador =
-            new DecodificadorMondo({
-
-            // TRAMA COMPLETA: 02 XX XX 03
-
-            alTrama: (trama: TramaMondo) => {
-                if (!contexto) return;
-
-                const marca =
-                    performance.now();
-
-                const fecha =
-                    new Date().toISOString();
-
-                const tipo =
-                    identificarRegistro(
-                        trama.direccion,
-                        trama.dato,
-                    );
-
-                const m =
-                    almacenRef.current.metricas;
-
-                m.tramas += 1;
-
-                if (!tipo.conocido) {
-                    m.otrasDirecciones += 1;
-                }
-
-                const entrada: TramaInterna = {
-                    id: m.tramas,
-
-                    recibidaEn:
-                        contexto.recibidoEn,
-
-                    reconocidaEn: fecha,
-
-                    hexadecimal:
-                        trama.hexadecimal,
-
-                    direccion:
-                        hex(trama.direccion),
-
-                    dato:
-                        hex(trama.dato),
-
-                    registro:
-                        tipo.nombre,
-
-                    significado:
-                        tipo.significado,
-
-                    salidaTipo:
-                        "sin-salida",
-
-                    salida:
-                        "Sin actualización emitida " +
-                        "(sin cambio, incompleto " +
-                        "o no reconocido)",
-
-                    resultadoEn: null,
-
-                    desdeLecturaMs:
-                        marca - contexto.inicioMs,
-
-                    desdeTramaMs: null,
-
-                    _reconocidaMs: marca,
-                };
-
-                contexto.tramaActual =
-                    entrada;
-
-                contexto.bloque.tramasDetectadas +=
-                    1;
-
-                almacenRef.current.tramas.push(
-                    entrada,
-                );
-
-                if (
-                    almacenRef.current.tramas.length >
-                    MAX_TRAMAS
-                ) {
-                    almacenRef.current.tramas.shift();
-
-                    m.tramasDescartadas += 1;
-                }
-            },
-
-            // RELOJ INTERPRETADO
-
-            alTiempo: (
-                lectura: LecturaTiempoMondo,
-            ) => {
-                almacenRef.current.reloj = {
-                    ...lectura,
-                };
-
-                almacenRef.current.metricas.relojes +=
-                    1;
-
-                registrarResultado(
-                    "tiempo",
-
-                    `${lectura.texto} · ` +
-                    `${lectura.formato} · ` +
-                    `${lectura.grupo}`,
-                );
-            },
-
-            // PERÍODO INTERPRETADO
-
-            alPeriodo: (
-                lectura: PeriodoMondo,
-            ) => {
-                almacenRef.current.periodo = {
-                    ...lectura,
-                };
-
-                almacenRef.current.metricas.periodos +=
-                    1;
-
-                registrarResultado(
-                    "periodo",
-
-                    `${lectura.type} · ` +
-                    `${lectura.number ?? "null"} · ` +
-                    `raw ${hex(lectura.raw)}`,
-                );
-            },
-
-            // DATOS ESPECIALES
-
-            alTiempoEspecial: (
-                lectura: TiempoEspecialMondo,
-            ) => {
-                almacenRef.current.metricas.especiales +=
-                    1;
-
-                registrarResultado(
-                    "especial",
-                    lectura.motivo,
-                );
-            },
-        });
-
-        decodificadorRef.current =
-            decodificador;
-
-        /* ====================================
-           BUCLE DE LECTURA
-           ==================================== */
-
-        const tarea = async () => {
-            try {
-                const flujo =
-                    puerto.readable;
-
-                if (!flujo) {
-                    throw new Error(
-                        "Puerto abierto sin flujo " +
-                        "de lectura (readable=null).",
-                    );
-                }
-
-                const lector =
-                    flujo.getReader();
-
-                lectorRef.current = lector;
-
-                try {
-                    while (
-                        sesion === sesionRef.current
-                    ) {
-                        // Medimos cuánto tarda
-                        // la espera de read().
-
-                        const esperaInicio =
-                            performance.now();
-
-                        const {
-                            value,
-                            done,
-                        } = await lector.read();
-
-                        const llegadaMs =
-                            performance.now();
-
-                        if (
-                            done ||
-                            sesion !== sesionRef.current
-                        ) {
+                    while (sesion === sesionRef.current) {
+                        datosRef.current.ultimaPeticionRead = FECHA();
+                        const inicioRead = performance.now();
+                        const { value, done } = await lector.read();
+                        const finRead = performance.now();
+                        if (sesion !== sesionRef.current) break;
+                        if (done) {
+                            registrar("SERIAL", "reader.read() devolvió done=true");
                             break;
                         }
-
-                        if (!value?.length) {
+                        if (!value || value.length === 0) {
+                            registrar("SERIAL", "reader.read() devolvió un bloque vacío");
                             continue;
                         }
 
-                        const recibidoEn =
-                            new Date().toISOString();
+                        // EL LOG RAW ES LO PRIMERO QUE HACEMOS CON LOS BYTES.
+                        // No hay decoder, parser, STX ni filtros.
+                        const hexadecimal = Array.from(value, HEX).join(" ");
+                        const decimal = Array.from(value).join(" ");
+                        const recibidoEn = FECHA();
+                        console.log(`[COM4 DATA]\nbytes: ${value.length}\nhex: ${hexadecimal}\ndecimal: ${decimal}`);
+                        console.log("[RAW]", hexadecimal);
 
-                        const almacen =
-                            almacenRef.current;
-
-                        const m =
-                            almacen.metricas;
-
-                        m.bloques += 1;
-                        m.bytes += value.length;
-
-                        m.recibidaPrimera ??=
-                            recibidoEn;
-
-                        m.recibidaUltima =
-                            recibidoEn;
-
-                        m.esperaUltimaMs =
-                            llegadaMs - esperaInicio;
-
-                        // Guardar bytes SIN alterar.
-
-                        const bloque: BloqueBruto = {
-                            id: m.bloques,
-
+                        const d = datosRef.current;
+                        d.ultimoRAW = recibidoEn;
+                        d.totalBloques++;
+                        d.totalBytes += value.length;
+                        d.lecturas.push({
+                            id: d.totalBloques,
                             recibidoEn,
-
                             bytes: value.length,
-
-                            hexadecimal:
-                                Array.from(
-                                    value,
-                                    hex,
-                                ).join(" "),
-
-                            esperaLecturaMs:
-                                llegadaMs - esperaInicio,
-
-                            procesamientoMs: 0,
-
-                            tramasDetectadas: 0,
-                        };
-
-                        almacen.bloques.push(
-                            bloque,
-                        );
-
-                        if (
-                            almacen.bloques.length >
-                            MAX_BLOQUES
-                        ) {
-                            almacen.bloques.shift();
-
-                            m.bloquesDescartados +=
-                                1;
+                            hexadecimal,
+                            decimal,
+                            esperaReadMs: finRead - inicioRead,
+                        });
+                        if (d.lecturas.length > MAX_RAW) {
+                            d.lecturas.shift();
+                            d.descartados++;
                         }
-
-                        contexto = {
-                            recibidoEn,
-
-                            inicioMs: llegadaMs,
-
-                            bloque,
-
-                            tramaActual: null,
-                        };
-
-                        // Ejecutar el mismo decoder
-                        // utilizado por el marcador.
-
-                        const procesoInicio =
-                            performance.now();
-
-                        decodificador.recibir(value);
-
-                        const duracion =
-                            performance.now() -
-                            procesoInicio;
-
-                        bloque.procesamientoMs =
-                            duracion;
-
-                        m.procesoUltimoMs =
-                            duracion;
-
-                        m.procesoMaxMs = Math.max(
-                            m.procesoMaxMs,
-                            duracion,
-                        );
-
-                        contexto = null;
-
-                        refrescar();
                     }
-
+                } catch (error) {
+                    if (sesion === sesionRef.current) {
+                        const errorTexto = error instanceof Error ? error.message : String(error);
+                        registrar("ERROR", `reader.read(): ${errorTexto}`);
+                        cambiarEstado("error");
+                        setMensaje(`Error leyendo COM4: ${errorTexto}`);
+                    }
                 } finally {
-                    lectorRef.current = null;
-
-                    lector.releaseLock();
+                    try { lector.releaseLock(); } catch { /* liberado */ }
+                    if (lectorRef.current === lector) lectorRef.current = null;
+                    try { await puerto.close(); } catch { /* puerto ya cerrado */ }
+                    if (puertoRef.current === puerto) puertoRef.current = null;
+                    if (sesion === sesionRef.current) {
+                        datosRef.current.fin = FECHA();
+                        if (estadoRef.current !== "error") {
+                            cambiarEstado("desconectado");
+                            setMensaje("La lectura terminó. Puerto cerrado.");
+                        }
+                    }
                 }
-
-            } catch (error) {
-                if (
-                    sesion === sesionRef.current
-                ) {
-                    const mensaje =
-                        error instanceof Error
-                            ? error.message
-                            : String(error);
-
-                    anotarError(
-                        `Lectura Web Serial: ${mensaje}`,
-                    );
-
-                    setDetalle(
-                        `Error de lectura: ${mensaje}`,
-                    );
-
-                    setConexion("error");
-                }
-
-            } finally {
-                try {
-                    await puerto.close();
-                } catch {
-                    // Ya cerrado.
-                }
-
-                if (
-                    puertoRef.current === puerto
-                ) {
-                    puertoRef.current = null;
-                }
-
-                if (
-                    sesion === sesionRef.current
-                ) {
-                    setConexion((estado) =>
-                        estado === "error"
-                            ? estado
-                            : "desconectado",
-                    );
-
-                    setDetalle((mensaje) =>
-                        mensaje.startsWith("Error")
-                            ? mensaje
-                            : "Captura terminada. " +
-                              "Puedes descargar el registro.",
-                    );
-                }
+            };
+            tareaRef.current = tarea();
+        } catch (error) {
+            const errorTexto = error instanceof Error ? error.message : String(error);
+            if (sesion === sesionRef.current) {
+                registrar("ERROR", `open/getReader: ${errorTexto}`);
+                cambiarEstado("error");
+                setMensaje(errorTexto);
             }
-        };
-
-        lecturaRef.current = tarea();
-
-    }, [
-        conexion,
-        anotarError,
-        refrescar,
-    ]);
-
-    /* ========================================
-       LIMPIAR CAPTURA
-       ======================================== */
+            try { await puerto.close(); } catch { /* cerrado */ }
+            if (puertoRef.current === puerto) puertoRef.current = null;
+            seleccionandoRef.current = false;
+        }
+    }, [cambiarEstado, registrar]);
 
     const limpiar = () => {
-        almacenRef.current =
-            nuevoAlmacen();
-
-        decodificadorRef.current?.reiniciar();
-
-        if (
-            refrescoRef.current !== null
-        ) {
-            clearTimeout(
-                refrescoRef.current,
-            );
-
-            refrescoRef.current = null;
-        }
-
-        setVista(
-            generarVista(
-                almacenRef.current,
-            ),
-        );
-
-        setIniciadoEn(
-            conexion === "conectado"
-                ? new Date().toISOString()
-                : null,
-        );
+        const d = datosRef.current;
+        d.lecturas = [];
+        d.eventos = [];
+        d.totalBytes = 0;
+        d.totalBloques = 0;
+        d.descartados = 0;
+        d.eventosDescartados = 0;
+        d.ultimoRAW = null;
+        registrar("SERIAL", "Registro RAW reiniciado (sin cerrar el puerto)");
+        forzarPintado(n => n + 1);
     };
 
-    /* ========================================
-       DESCARGAR INFORME
-       ======================================== */
-
-    const descargar = (
-        tipo: "json" | "csv",
-    ) => {
-        const almacen =
-            almacenRef.current;
-
-        const fecha =
-            new Date().toISOString();
-
-        const limpio = (
-            fila: TramaRegistro,
-        ) => {
-            const {
-                _reconocidaMs: _omitida,
-                ...resto
-            } = fila as TramaRegistro & {
-                _reconocidaMs?: number;
-            };
-
-            void _omitida;
-
-            return resto;
-        };
-
-        let contenido: string;
-        let mime: string;
-
-        if (tipo === "json") {
-            contenido = JSON.stringify(
-                {
-                    formato:
-                        "CBA-MONDO-DIAGNOSTICO-v1",
-
-                    generadoEn: fecha,
-
-                    inicio: iniciadoEn,
-
-                    metodo: "Web Serial API",
-
-                    puerto:
-                        "Seleccionado por el usuario; " +
-                        "la API no revela el nombre " +
-                        "COM de Windows",
-
-                    parametrosSerie: {
-                        baudRate: BAUD_RATE,
-                        dataBits: 8,
-                        stopBits: 1,
-                        parity: "none",
-                        flowControl: "none",
-                    },
-
-                    dispositivo: infoPuerto,
-
-                    origen:
-                        window.location.origin,
-
-                    navegador:
-                        navigator.userAgent,
-
-                    conexion,
-                    detalle,
-
-                    notaTiempos:
-                        "Desde la resolución de " +
-                        "reader.read() hasta callback " +
-                        "del decoder. No mide " +
-                        "latencia eléctrica ni " +
-                        "renderizado React.",
-
-                    limites: {
-                        maxTramas: MAX_TRAMAS,
-                        maxBloques: MAX_BLOQUES,
-
-                        descartes: {
-                            tramas:
-                                almacen.metricas
-                                    .tramasDescartadas,
-
-                            bloques:
-                                almacen.metricas
-                                    .bloquesDescartados,
-                        },
-                    },
-
-                    metricas:
-                        almacen.metricas,
-
-                    decodificado: {
-                        reloj: almacen.reloj,
-                        periodo: almacen.periodo,
-                    },
-
-                    lecturasCrudas:
-                        almacen.bloques,
-
-                    tramas:
-                        almacen.tramas.map(
-                            limpio,
-                        ),
-                },
-                null,
-                2,
-            );
-
-            mime =
-                "application/json;charset=utf-8";
-
+    const descargar = (formato: "json" | "csv") => {
+        const d = datosRef.current;
+        const marca = FECHA().replaceAll(":", "-");
+        if (formato === "json") {
+            guardarArchivo(`mondo-raw-${marca}.json`, JSON.stringify({
+                nombre: "CBA MONDO - DIAGNOSTICO RAW",
+                generadoEn: FECHA(),
+                metodo: "Web Serial API / ReadableStreamDefaultReader.read()",
+                puerto: "El nombre COM de Windows no se expone; verificar COM4 en selector",
+                configuracion: SERIAL,
+                estado,
+                mensaje,
+                navegador: navigator.userAgent,
+                captura: d,
+                nota: "Espera read() = tiempo bloqueado hasta la entrega de un bloque; no es latencia de decodificación ni de transmisión física.",
+            }, null, 2), "application/json;charset=utf-8");
         } else {
-            const cabecera = [
-                "n",
-                "recibido_en",
-                "trama_detectada_en",
-                "resultado_en",
-                "hexadecimal",
-                "direccion",
-                "dato",
-                "registro",
-                "significado",
-                "tipo_salida",
-                "salida_decoder",
-                "desde_lectura_ms",
-                "desde_trama_ms",
-            ];
-
-            const filas = almacen.tramas.map(
-                (r) => [
-                    r.id,
-                    r.recibidaEn,
-                    r.reconocidaEn,
-                    r.resultadoEn ?? "",
-                    r.hexadecimal,
-                    r.direccion,
-                    r.dato,
-                    r.registro,
-                    r.significado,
-                    r.salidaTipo,
-                    r.salida,
-                    r.desdeLecturaMs ?? "",
-                    r.desdeTramaMs ?? "",
-                ],
-            );
-
-            const campo = (v: unknown) =>
-                `"${String(v).replaceAll(
-                    '"',
-                    '""',
-                )}"`;
-
-            contenido = [
-                cabecera,
-                ...filas,
-            ]
-                .map((fila) =>
-                    fila.map(campo).join(","),
-                )
-                .join("\r\n");
-
-            mime =
-                "text/csv;charset=utf-8";
+            const celda = (v: string | number) => `"${String(v).replaceAll('"', '""')}"`;
+            const filas = [["id", "recibidoEn", "bytes", "hexadecimal", "decimal", "esperaReadMs"],
+                ...d.lecturas.map(r => [String(r.id), r.recibidoEn, String(r.bytes), r.hexadecimal, r.decimal, String(r.esperaReadMs)])];
+            guardarArchivo(`mondo-raw-${marca}.csv`, "\uFEFF" + filas.map(f => f.map(celda).join(",")).join("\r\n"), "text/csv;charset=utf-8");
         }
-
-        const archivo = new Blob(
-            [contenido],
-            { type: mime },
-        );
-
-        const url =
-            URL.createObjectURL(archivo);
-
-        const enlace =
-            document.createElement("a");
-
-        enlace.href = url;
-
-        enlace.download =
-            "cba-mondo-diagnostico-" +
-            fecha
-                .replaceAll(":", "-")
-                .replaceAll(".", "-") +
-            `.${tipo}`;
-
-        document.body.appendChild(
-            enlace,
-        );
-
-        enlace.click();
-        enlace.remove();
-
-        window.setTimeout(
-            () => URL.revokeObjectURL(url),
-            1000,
-        );
     };
 
-    /* ========================================
-       DATOS DE REPRESENTACIÓN
-       ======================================== */
+    const d = datosRef.current;
+    const esperandoDesde = d.ultimaPeticionRead
+        ? Math.max(0, (Date.now() - new Date(d.ultimaPeticionRead).getTime()) / 1000)
+        : null;
+    const escuchando = estado === "escuchando";
 
-    const m = vista.metricas;
-
-    const estadoColor =
-        conexion === "conectado"
-            ? "text-emerald-300"
-            : conexion === "error"
-                ? "text-rose-300"
-                : "text-amber-200";
-
-    const llavePuerto =
-        infoPuerto?.usbVendorId !== undefined
-            ? `VID 0x${hex(
-                infoPuerto.usbVendorId,
-            )} · PID ${
-                infoPuerto.usbProductId !== undefined
-                    ? `0x${hex(
-                        infoPuerto.usbProductId,
-                    )}`
-                    : "no disponible"
-            }`
-            : infoPuerto?.bluetoothServiceClassId
-                ? `Bluetooth: ${
-                    infoPuerto.bluetoothServiceClassId
-                }`
-                : "Identificador no disponible";
-
-    /* ========================================
-       INTERFAZ
-       ======================================== */
+    const etapas = [
+        ["1", "Puerto abierto", d.puertoAbierto !== null ? "CONFIRMADO" : "PENDIENTE"],
+        ["2", "reader.read() iniciado", d.lectorActivo !== null ? "CONFIRMADO" : "PENDIENTE"],
+        ["3", "Bytes RAW recibidos", d.totalBytes > 0 ? "CONFIRMADO" : "SIN EVIDENCIA"],
+        ["4", "Parser / buffer", "NO PROBADO"],
+        ["5", "STX/ETX", "NO PROBADO"],
+        ["6", "Tramas", "NO PROBADO"],
+        ["7", "Dirección / dato", "NO PROBADO"],
+        ["8", "Decoder", "NO PROBADO"],
+        ["9", "Estado global", "NO PROBADO"],
+        ["10", "WebSocket", "NO APLICA"],
+        ["11", "React / marcador", "NO PROBADO"],
+    ];
 
     return (
-        <main className="min-h-dvh bg-[#061525] px-4 py-6 text-[#e8f5ff] sm:px-7 lg:px-10">
-            <div className="mx-auto max-w-[1700px] space-y-5">
-
-                {/* CABECERA */}
-
-                <header className="flex flex-wrap items-start justify-between gap-4 border-b border-sky-200/10 pb-5">
+        <main className="min-h-screen bg-[#061522] p-4 text-slate-100 sm:p-7">
+            <div className="mx-auto max-w-[1680px] space-y-5">
+                <header className="flex flex-wrap items-center justify-between gap-4 border-b border-cyan-300/15 pb-5">
                     <div>
-                        <div className="mb-2 flex items-center gap-3">
-                            <span className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-2.5 py-1 font-mono text-xs font-semibold tracking-widest text-cyan-300">
-                                CBA / TOOLS
-                            </span>
-
-                            <span className="font-mono text-xs text-sky-100/40">
-                                SERIAL INSPECTOR v1.0
-                            </span>
-                        </div>
-
-                        <h1 className="text-2xl font-black tracking-tight sm:text-3xl">
-                            Diagnóstico MONDO{" "}
-                            <span className="font-mono font-light text-cyan-300">
-                                / COM4
-                            </span>
-                        </h1>
-
-                        <p className="mt-1 text-sm text-sky-100/55">
-                            Monitor bruto y decodificado ·
-                            recepción en tiempo real ·
-                            mediciones · exportación
-                        </p>
+                        <div className="mb-2 font-mono text-xs font-semibold tracking-[.2em] text-cyan-300">CB ANDRATX / HARDWARE LAB / WEB SERIAL</div>
+                        <h1 className="text-2xl font-black sm:text-3xl">Diagnóstico RAW de COM4</h1>
+                        <p className="mt-1 text-sm text-slate-400">Fase 1 · Entrada serie sin filtrado, buffer ni decoder</p>
                     </div>
-
-                    <div className="flex flex-wrap items-center gap-2">
-                        <Link
-                            to="/control"
-                            className={`${BOTON} border border-white/15 bg-white/5 text-white hover:bg-white/10`}
-                        >
-                            Volver al control
-                        </Link>
-
-                        <button
-                            type="button"
-                            onClick={() => descargar("csv")}
-                            className={`${BOTON} border border-sky-300/20 bg-sky-300/10 text-sky-100 hover:bg-sky-300/20`}
-                        >
-                            Exportar CSV
-                        </button>
-
-                        <button
-                            type="button"
-                            onClick={() => descargar("json")}
-                            className={`${BOTON} bg-cyan-300 text-[#062137] hover:bg-cyan-200`}
-                        >
-                            Descargar diagnóstico JSON
-                        </button>
+                    <div className="flex flex-wrap gap-2">
+                        <Link to="/control" className={`${BOTON} border border-white/15 bg-white/5`}>Volver al marcador</Link>
+                        <button onClick={() => descargar("csv")} className={`${BOTON} border border-cyan-300/30 text-cyan-200`}>Descargar CSV</button>
+                        <button onClick={() => descargar("json")} className={`${BOTON} bg-cyan-300 text-[#082238]`}>Descargar JSON</button>
                     </div>
                 </header>
 
-                {/* =================================
-                    FILA 1: CONEXIÓN Y TELEMETRÍA
-                    ================================= */}
-
-                <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-
-                    {/* PUERTO */}
-
-                    <div className={`${PANEL} xl:col-span-4`}>
-                        <div className="mb-4 flex items-center justify-between gap-2">
-                            <h2 className="text-base font-bold">
-                                01 · Puerto y conexión
-                            </h2>
-
-                            <span className={`font-mono text-xs font-bold ${estadoColor}`}>
-                                ● {conexion.toUpperCase()}
-                            </span>
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+                    <section className={`${PANEL} xl:col-span-5`}>
+                        <div className="flex items-center justify-between gap-2">
+                            <h2 className="font-semibold">01 / Puerto y lector</h2>
+                            <span className={`font-mono text-xs font-bold ${escuchando ? "text-emerald-300" : estado === "error" ? "text-rose-300" : "text-amber-300"}`}>{estado.toUpperCase()}</span>
                         </div>
-
-                        <dl className="grid grid-cols-[minmax(110px,1fr)_1.2fr] gap-x-3 gap-y-2 text-sm">
-                            <dt className="text-sky-100/50">
-                                Método
-                            </dt>
-                            <dd className="text-right font-semibold">
-                                Web Serial API
-                            </dd>
-
-                            <dt className="text-sky-100/50">
-                                Puerto Windows
-                            </dt>
-                            <dd className="text-right font-mono">
-                                Seleccionar COM4
-                            </dd>
-
-                            <dt className="text-sky-100/50">
-                                Parámetros
-                            </dt>
-                            <dd className="text-right font-mono">
-                                19200 · 8N1
-                            </dd>
-
-                            <dt className="text-sky-100/50">
-                                Flujo
-                            </dt>
-                            <dd className="text-right font-mono">
-                                Sin control
-                            </dd>
-
-                            <dt className="text-sky-100/50">
-                                Identidad USB
-                            </dt>
-                            <dd className="break-all text-right font-mono text-xs">
-                                {llavePuerto}
-                            </dd>
-
-                            <dt className="text-sky-100/50">
-                                Inicio
-                            </dt>
-                            <dd className="text-right font-mono text-xs">
-                                {hora(iniciadoEn)}
-                            </dd>
+                        <div className="mt-3 rounded-lg bg-black/25 p-3 text-sm text-sky-100/80">{mensaje}</div>
+                        <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                            <dt className="text-slate-400">Método</dt><dd className="text-right font-mono">Web Serial</dd>
+                            <dt className="text-slate-400">Puerto</dt><dd className="text-right font-mono">Elegir COM4</dd>
+                            <dt className="text-slate-400">Configuración</dt><dd className="text-right font-mono">19200 · 8N1</dd>
+                            <dt className="text-slate-400">Control de flujo</dt><dd className="text-right font-mono">none</dd>
+                            <dt className="text-slate-400">Puerto abierto a las</dt><dd className="text-right font-mono">{mostrarHora(d.puertoAbierto)}</dd>
+                            <dt className="text-slate-400">Lector iniciado a las</dt><dd className="text-right font-mono">{mostrarHora(d.lectorActivo)}</dd>
+                            <dt className="text-slate-400">Último read()</dt><dd className="text-right font-mono">{mostrarHora(d.ultimaPeticionRead)}</dd>
+                            <dt className="text-slate-400">Espera del read() actual</dt><dd className="text-right font-mono">{escuchando && esperandoDesde !== null ? `${esperandoDesde.toFixed(1)} s` : "—"}</dd>
+                            <dt className="text-slate-400">Última recepción</dt><dd className="text-right font-mono">{mostrarHora(d.ultimoRAW)}</dd>
+                            <dt className="text-slate-400">Dispositivo</dt><dd className="break-all text-right font-mono text-xs">{d.dispositivo ? JSON.stringify(d.dispositivo) : "N/D"}</dd>
                         </dl>
-
-                        <div className="mt-4 rounded-lg border border-sky-100/10 bg-black/15 p-3 text-xs leading-relaxed text-sky-100/65">
-                            {detalle}
-                        </div>
-
                         <div className="mt-4 flex flex-wrap gap-2">
-                            {conexion === "conectado" ? (
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        void cerrarPuerto()
-                                    }
-                                    className={`${BOTON} bg-rose-400/15 text-rose-200 hover:bg-rose-400/25`}
-                                >
-                                    Desconectar
-                                </button>
-                            ) : (
-                                <button
-                                    type="button"
-                                    disabled={
-                                        conexion === "seleccionando" ||
-                                        conexion === "abriendo"
-                                    }
-                                    onClick={() =>
-                                        void conectar()
-                                    }
-                                    className={`${BOTON} bg-emerald-300 text-[#072435] hover:bg-emerald-200`}
-                                >
-                                    Conectar y capturar
-                                </button>
-                            )}
-
-                            <button
-                                type="button"
-                                onClick={limpiar}
-                                className={`${BOTON} border border-white/10 bg-white/5 text-white/80 hover:bg-white/10`}
-                            >
-                                Limpiar registro
-                            </button>
+                            <button type="button" disabled={estado === "abriendo" || estado === "seleccionando" || estado === "cerrando" || escuchando} onClick={() => void conectar()} className={`${BOTON} bg-emerald-300 text-[#092438]`}>Conectar y escuchar</button>
+                            <button type="button" disabled={!escuchando} onClick={() => void desconectar()} className={`${BOTON} bg-rose-400/20 text-rose-200`}>Desconectar</button>
+                            <button type="button" onClick={limpiar} className={`${BOTON} border border-white/15 bg-white/5`}>Limpiar captura</button>
                         </div>
+                        <p className="mt-3 text-xs leading-5 text-amber-100/70">MondoVideo, Serial Watcher y otras páginas del marcador deben estar cerrados. Web Serial no puede comprobar el nombre COM de Windows: selecciónalo manualmente. No se invoca setSignals() ni se modifican DTR/RTS.</p>
+                    </section>
 
-                        <p className="mt-3 text-xs text-amber-200/75">
-                            El nombre COM4 no es legible
-                            desde Web Serial: compruébalo
-                            en el selector de Chrome. No
-                            abras el marcador o MondoVideo
-                            simultáneamente.
-                        </p>
-                    </div>
-
-                    {/* MÉTRICAS */}
-
-                    <div className={`${PANEL} xl:col-span-8`}>
-                        <h2 className="mb-4 text-base font-bold">
-                            02 · Telemetría de recepción
-                        </h2>
-
-                        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 2xl:grid-cols-6">
-                            {[
-                                [
-                                    "Bytes recibidos",
-                                    m.bytes.toLocaleString("es-ES"),
-                                    "Cualquier dato bruto",
-                                ],
-                                [
-                                    "Lecturas read()",
-                                    m.bloques.toLocaleString("es-ES"),
-                                    "Bloques de Web Serial",
-                                ],
-                                [
-                                    "Tramas válidas",
-                                    m.tramas.toLocaleString("es-ES"),
-                                    "02 XX XX 03",
-                                ],
-                                [
-                                    "Relojes emitidos",
-                                    m.relojes.toLocaleString("es-ES"),
-                                    "Actualizaciones",
-                                ],
-                                [
-                                    "Períodos emitidos",
-                                    m.periodos.toLocaleString("es-ES"),
-                                    "Dirección AA",
-                                ],
-                                [
-                                    "Otras direcciones",
-                                    m.otrasDirecciones.toLocaleString("es-ES"),
-                                    "Tramas sin mapa",
-                                ],
-                            ].map(
-                                ([
-                                    titulo,
-                                    valor,
-                                    descripcion,
-                                ]) => (
-                                    <div
-                                        key={titulo}
-                                        className="rounded-xl border border-sky-200/10 bg-[#112c45] p-3"
-                                    >
-                                        <p className={ETIQUETA}>
-                                            {titulo}
-                                        </p>
-
-                                        <p className="mt-2 font-mono text-2xl font-bold tabular-nums text-cyan-300">
-                                            {valor}
-                                        </p>
-
-                                        <p className="mt-1 text-[11px] text-sky-100/40">
-                                            {descripcion}
-                                        </p>
-                                    </div>
-                                ),
-                            )}
-                        </div>
-
-                        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                            <div className="rounded-lg bg-black/15 p-3">
-                                <p className={ETIQUETA}>
-                                    Primera lectura
-                                </p>
-                                <p className="mt-1 font-mono text-sm">
-                                    {hora(m.recibidaPrimera)}
-                                </p>
-                            </div>
-
-                            <div className="rounded-lg bg-black/15 p-3">
-                                <p className={ETIQUETA}>
-                                    Últimos bytes
-                                </p>
-                                <p className="mt-1 font-mono text-sm">
-                                    {hora(m.recibidaUltima)}
-                                </p>
-                            </div>
-
-                            <div className="rounded-lg bg-black/15 p-3">
-                                <p className={ETIQUETA}>
-                                    Último resultado
-                                </p>
-                                <p className="mt-1 font-mono text-sm">
-                                    {hora(m.resultadoUltimo)}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </section>
-
-                {/* =================================
-                    FILA 2: RAW Y DECODIFICACIÓN
-                    ================================= */}
-
-                <section className="grid grid-cols-1 gap-4 xl:grid-cols-12">
-
-                    {/* BYTES ORIGINALES */}
-
-                    <div className={`${PANEL} min-w-0 xl:col-span-6`}>
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                            <h2 className="text-base font-bold">
-                                03 · Bytes originales de COM4
-                            </h2>
-
-                            <span className="font-mono text-xs text-sky-200/50">
-                                HEX · SIN MODIFICAR
-                            </span>
-                        </div>
-
-                        <p className="mb-3 text-xs text-sky-100/50">
-                            Cada fila representa exactamente
-                            un bloque devuelto por reader.read();
-                            puede contener media trama o varias.
-                        </p>
-
-                        <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
-                            {vista.bloques.length === 0 ? (
-                                <p className="rounded-lg bg-black/15 p-5 text-center text-sm text-sky-100/40">
-                                    Aún no han llegado bytes.
-                                </p>
-                            ) : (
-                                vista.bloques.map((b) => (
-                                    <div
-                                        key={b.id}
-                                        className="rounded-lg border border-white/5 bg-[#091a2b] p-3"
-                                    >
-                                        <div className="mb-2 flex flex-wrap justify-between gap-2 text-[11px] text-sky-100/55">
-                                            <span className="font-mono">
-                                                #{b.id} ·{" "}
-                                                {hora(b.recibidoEn)} ·{" "}
-                                                {b.bytes} B
-                                            </span>
-
-                                            <span className="font-mono">
-                                                read:{" "}
-                                                {milisegundos(b.esperaLecturaMs)}
-                                                {" · "}
-                                                decode:{" "}
-                                                {milisegundos(b.procesamientoMs)}
-                                            </span>
-                                        </div>
-
-                                        <div className="break-all font-mono text-xs leading-6 tracking-wide text-emerald-200">
-                                            {b.hexadecimal}
-                                        </div>
-
-                                        <p className="mt-1 text-[11px] text-sky-100/40">
-                                            Tramas detectadas en este bloque:{" "}
-                                            {b.tramasDetectadas}
-                                        </p>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
-
-                    {/* RESULTADO DEL DECODER */}
-
-                    <div className={`${PANEL} min-w-0 xl:col-span-6`}>
-                        <div className="mb-3 flex items-center justify-between gap-2">
-                            <h2 className="text-base font-bold">
-                                04 · Tramas y resultado del decoder
-                            </h2>
-
-                            <span className="font-mono text-xs text-sky-200/50">
-                                DECODER REAL
-                            </span>
-                        </div>
-
-                        <p className="mb-3 text-xs text-sky-100/50">
-                            «Sin actualización» no significa
-                            trama errónea: el decoder puede
-                            estar esperando otras posiciones
-                            o haber recibido un valor repetido.
-                        </p>
-
-                        <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
-                            {vista.tramas.length === 0 ? (
-                                <p className="rounded-lg bg-black/15 p-5 text-center text-sm text-sky-100/40">
-                                    Ninguna trama válida reconocida todavía.
-                                </p>
-                            ) : (
-                                vista.tramas.map((t) => (
-                                    <div
-                                        key={t.id}
-                                        className="rounded-lg border border-white/5 bg-[#091a2b] p-3"
-                                    >
-                                        <div className="flex flex-wrap items-center justify-between gap-2">
-                                            <span className="font-mono text-xs font-semibold text-cyan-200">
-                                                #{t.id} · {t.hexadecimal}
-                                            </span>
-
-                                            <span
-                                                className={`rounded-md px-2 py-0.5 text-[11px] ${
-                                                    t.salidaTipo === "sin-salida"
-                                                        ? "bg-white/10 text-sky-100/50"
-                                                        : "bg-emerald-400/15 text-emerald-200"
-                                                }`}
-                                            >
-                                                {t.salidaTipo === "sin-salida"
-                                                    ? "Sin actualización"
-                                                    : `Salida ${t.salidaTipo}`}
-                                            </span>
-                                        </div>
-
-                                        <p className="mt-1 text-xs text-sky-200/60">
-                                            {t.registro} ·{" "}
-                                            {t.significado}
-                                        </p>
-
-                                        <p className="mt-1 break-words text-sm font-semibold">
-                                            {t.salida}
-                                        </p>
-
-                                        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-sky-100/40">
-                                            <span>
-                                                Read:{" "}
-                                                {hora(t.recibidaEn)}
-                                            </span>
-
-                                            <span>
-                                                Decoder:{" "}
-                                                {hora(
-                                                    t.resultadoEn ??
-                                                    t.reconocidaEn,
-                                                )}
-                                            </span>
-
-                                            <span>
-                                                Latencia:{" "}
-                                                {milisegundos(
-                                                    t.desdeLecturaMs,
-                                                )}
-                                            </span>
-
-                                            <span>
-                                                Trama → salida:{" "}
-                                                {milisegundos(
-                                                    t.desdeTramaMs,
-                                                )}
-                                            </span>
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
-                </section>
-
-                {/* =================================
-                    FILA 3: ESTADOS Y RENDIMIENTO
-                    ================================= */}
-
-                <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-
-                    {/* RELOJ INTERPRETADO */}
-
-                    <div className={PANEL}>
-                        <p className={ETIQUETA}>
-                            05 · Último reloj interpretado
-                        </p>
-
-                        <p className="mt-3 font-mono text-5xl font-black tabular-nums text-cyan-300">
-                            {vista.reloj?.texto ?? "--:--"}
-                        </p>
-
-                        <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                            <dt className="text-sky-100/45">
-                                Formato
-                            </dt>
-                            <dd className="text-right font-mono">
-                                {vista.reloj?.formato ?? "—"}
-                            </dd>
-
-                            <dt className="text-sky-100/45">
-                                Último minuto
-                            </dt>
-                            <dd className="text-right">
-                                {vista.reloj
-                                    ? vista.reloj.ultimoMinuto
-                                        ? "Sí"
-                                        : "No"
-                                    : "—"}
-                            </dd>
-
-                            <dt className="text-sky-100/45">
-                                Grupo de origen
-                            </dt>
-                            <dd className="text-right font-mono">
-                                {vista.reloj?.grupo ?? "—"}
-                            </dd>
-
-                            <dt className="text-sky-100/45">
-                                Decodificado
-                            </dt>
-                            <dd className="text-right font-mono">
-                                {hora(
-                                    vista.reloj
-                                        ? new Date(
-                                            vista.reloj.recibidoEn,
-                                        ).toISOString()
-                                        : null,
-                                )}
-                            </dd>
-                        </dl>
-                    </div>
-
-                    {/* PERÍODO INTERPRETADO */}
-
-                    <div className={PANEL}>
-                        <p className={ETIQUETA}>
-                            06 · Último período interpretado
-                        </p>
-
-                        <p className="mt-3 font-mono text-5xl font-black text-amber-200">
-                            {vista.periodo
-                                ? vista.periodo.type === "quarter"
-                                    ? vista.periodo.number
-                                    : vista.periodo.type === "overtime"
-                                        ? "OT"
-                                        : "∅"
-                                : "—"}
-                        </p>
-
-                        <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
-                            <dt className="text-sky-100/45">
-                                Tipo
-                            </dt>
-                            <dd className="text-right font-mono">
-                                {vista.periodo?.type ?? "—"}
-                            </dd>
-
-                            <dt className="text-sky-100/45">
-                                Raw
-                            </dt>
-                            <dd className="text-right font-mono">
-                                {vista.periodo
-                                    ? `0x${hex(vista.periodo.raw)}`
-                                    : "—"}
-                            </dd>
-
-                            <dt className="text-sky-100/45">
-                                Número
-                            </dt>
-                            <dd className="text-right font-mono">
-                                {vista.periodo?.number ?? "null"}
-                            </dd>
-
-                            <dt className="text-sky-100/45">
-                                Decodificado
-                            </dt>
-                            <dd className="text-right font-mono">
-                                {hora(
-                                    vista.periodo
-                                        ? new Date(
-                                            vista.periodo.recibidoEn,
-                                        ).toISOString()
-                                        : null,
-                                )}
-                            </dd>
-                        </dl>
-                    </div>
-
-                    {/* MÉTRICAS DE TIEMPO */}
-
-                    <div className={PANEL}>
-                        <p className={ETIQUETA}>
-                            07 · Tiempos y rendimiento
-                        </p>
-
-                        <dl className="mt-4 space-y-3 text-sm">
-                            {[
-                                [
-                                    "Espera del último read()",
-                                    milisegundos(m.esperaUltimaMs),
-                                ],
-                                [
-                                    "Proceso del último bloque",
-                                    milisegundos(m.procesoUltimoMs),
-                                ],
-                                [
-                                    "Máximo por bloque",
-                                    milisegundos(m.procesoMaxMs),
-                                ],
-                                [
-                                    "Lectura → resultado",
-                                    milisegundos(m.latenciaUltimaMs),
-                                ],
-                                [
-                                    "Latencia máxima",
-                                    milisegundos(m.maxLatenciaMs),
-                                ],
-                                [
-                                    "Eventos especiales",
-                                    String(m.especiales),
-                                ],
-                            ].map(([clave, valor]) => (
-                                <div
-                                    key={clave}
-                                    className="flex items-center justify-between gap-3"
-                                >
-                                    <span className="text-sky-100/55">
-                                        {clave}
-                                    </span>
-
-                                    <span className="font-mono font-semibold text-white">
-                                        {valor}
-                                    </span>
+                    <section className={`${PANEL} xl:col-span-7`}>
+                        <h2 className="font-semibold">02 / Evidencias de recepción</h2>
+                        <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+                            {[["PUERTO", d.puertoAbierto ? "ABIERTO" : "—"], ["LECTOR", d.lectorActivo ? "ACTIVO" : "—"], ["BYTES RAW", d.totalBytes.toLocaleString("es-ES")], ["CHUNKS", d.totalBloques.toLocaleString("es-ES")]].map(([titulo, valor]) => (
+                                <div key={titulo} className="rounded-xl border border-cyan-100/10 bg-[#092035] p-3">
+                                    <p className="text-[11px] uppercase tracking-wider text-slate-400">{titulo}</p>
+                                    <p className="mt-2 font-mono text-xl font-bold text-cyan-300">{valor}</p>
                                 </div>
                             ))}
-                        </dl>
-
-                        <p className="mt-4 rounded-lg bg-black/15 p-3 text-xs leading-relaxed text-sky-100/55">
-                            La espera de read() no es latencia de transmisión.
-                            El tiempo de decodificación empieza al recibir
-                            el bloque en JavaScript y termina al emitir
-                            el callback. No incluye el renderizado de React.
-                        </p>
-                    </div>
-                </section>
-
-                {/* AVISOS */}
-
-                {(
-                    vista.ultimoError ||
-                    m.tramasDescartadas > 0 ||
-                    m.bloquesDescartados > 0
-                ) && (
-                    <section className={`${PANEL} border-amber-300/20`}>
-                        <h2 className="font-semibold text-amber-200">
-                            Avisos de captura
-                        </h2>
-
-                        {vista.ultimoError && (
-                            <p className="mt-2 text-sm text-rose-200">
-                                {vista.ultimoError}
-                            </p>
-                        )}
-
-                        {(
-                            m.tramasDescartadas > 0 ||
-                            m.bloquesDescartados > 0
-                        ) && (
-                            <p className="mt-2 text-sm text-amber-200/80">
-                                Se alcanzó el límite de memoria:
-                                se han omitido {m.tramasDescartadas} tramas
-                                y {m.bloquesDescartados} bloques antiguos
-                                de la exportación. Los contadores globales
-                                permanecen completos.
-                            </p>
-                        )}
+                        </div>
+                        <div className="mt-4 space-y-2 text-sm">
+                            <p className="font-semibold">Resultado de la prueba</p>
+                            {d.totalBytes > 0 ? (
+                                <p className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-emerald-200">Confirmado: el navegador ha recibido bytes RAW. Ya podemos revisar el parser en la siguiente fase.</p>
+                            ) : escuchando ? (
+                                <p className="rounded-lg border border-amber-400/20 bg-amber-400/10 p-3 text-amber-200">El lector está esperando bytes. No hay evidencia de recepción. Cambia reloj/período y pulsa bocina; si sigue a cero, hay que investigar puerto seleccionado, transmisión, controlador o conexión.</p>
+                            ) : (
+                                <p className="rounded-lg bg-white/5 p-3 text-slate-300">Todavía no hay una captura activa.</p>
+                            )}
+                            <p className="text-xs text-slate-400">`reader.read()` es una espera asíncrona: no hay un retraso de lectura programado. La duración hasta que resuelve no equivale a la latencia física.</p>
+                        </div>
                     </section>
-                )}
+                </div>
 
-                <footer className="pb-5 text-center text-xs text-sky-100/35">
-                    Club Bàsquet Andratx ·
-                    Diagnóstico técnico de solo lectura ·
-                    Ningún dato se envía a un servidor
-                </footer>
+                <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+                    <section className={`${PANEL} min-w-0 xl:col-span-7`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">03 / Flujo RAW · HEX y decimal</h2><span className="font-mono text-xs text-slate-400">SIN FILTRAR</span></div>
+                        <div className="mt-3 max-h-[410px] space-y-2 overflow-y-auto">
+                            {d.lecturas.length === 0 ? <p className="rounded-lg bg-black/20 p-4 text-sm text-slate-400">No ha llegado ningún chunk de COM4.</p> : d.lecturas.slice(-45).reverse().map(r => (
+                                <div key={r.id} className="rounded-lg border border-white/5 bg-black/20 p-3">
+                                    <div className="mb-2 flex flex-wrap items-center justify-between gap-2 font-mono text-xs text-slate-400"><span>#{r.id} · {mostrarHora(r.recibidoEn)} · {r.bytes} bytes</span><span>read() bloqueado {r.esperaReadMs.toFixed(2)} ms</span></div>
+                                    <p className="break-all font-mono text-sm leading-relaxed text-emerald-300"><span className="text-slate-500">HEX </span>{r.hexadecimal}</p>
+                                    <p className="mt-1 break-all font-mono text-xs text-sky-200"><span className="text-slate-500">DEC </span>{r.decimal}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </section>
+                    <section className={`${PANEL} xl:col-span-5`}>
+                        <h2 className="font-semibold">04 / Capas de diagnóstico</h2>
+                        <div className="mt-3 space-y-1">
+                            {etapas.map(([id, titulo, resultado]) => (
+                                <div key={id} className="flex items-center justify-between gap-3 border-b border-white/5 py-2 text-sm"><span className="text-slate-300"><span className="mr-2 font-mono text-slate-500">{id}.</span>{titulo}</span><span className={`shrink-0 font-mono text-[10px] ${resultado === "CONFIRMADO" ? "text-emerald-300" : resultado === "SIN EVIDENCIA" ? "text-amber-300" : "text-slate-500"}`}>{resultado}</span></div>
+                            ))}
+                        </div>
+                    </section>
+                </div>
+
+                <section className={PANEL}>
+                    <h2 className="font-semibold">05 / Registro de actividad</h2>
+                    <div className="mt-3 max-h-[270px] overflow-auto">
+                        <table className="w-full min-w-[600px] text-left text-xs"><thead className="sticky top-0 bg-[#19364F] text-cyan-200"><tr><th className="p-2">Hora</th><th className="p-2">Capa</th><th className="p-2">Mensaje</th></tr></thead>
+                        <tbody>{d.eventos.slice(-80).reverse().map(e => <tr key={e.id} className="border-t border-white/10"><td className="whitespace-nowrap p-2 font-mono">{mostrarHora(e.fecha)}</td><td className="p-2 text-cyan-200">{e.etapa}</td><td className="p-2">{e.mensaje}</td></tr>)}</tbody></table>
+                    </div>
+                    <p className="mt-3 text-xs text-slate-400">También se escribe en la consola de Chrome (F12). La captura JSON conserva los chunks RAW retenidos y los eventos, incluso si se reciben cero bytes. Se limita a {MAX_RAW.toLocaleString("es-ES")} chunks en memoria; descartados: {d.descartados}.</p>
+                </section>
             </div>
         </main>
     );
